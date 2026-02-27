@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindlakevm.local/specs/bench/scenario_spec_v0.1.json",
+  "title": "BenchScenario",
+  "description": "MindLakeVM Bench 评测场景的 YAML 结构定义。specs/bench/scenarios/*.yaml 必须符合此 schema。",
+  "type": "object",
+  "required": ["id", "name", "type", "skill_id", "document", "test_cases"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "场景唯一 ID，kebab-case，与文件名一致",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "name": {
+      "type": "string",
+      "description": "场景展示名称",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "type": {
+      "type": "string",
+      "description": "场景类型，对应 PRD §3.2 三类核心场景",
+      "enum": ["sop", "policy", "rfc"]
+    },
+    "description": {
+      "type": "string",
+      "description": "场景说明（面向路演观众）"
+    },
+    "skill_id": {
+      "type": "string",
+      "description": "对应的 Skill ID（需先通过 POST /compile 生成）"
+    },
+    "document": {
+      "$ref": "#/$defs/ScenarioDocument"
+    },
+    "baselines": {
+      "type": "object",
+      "description": "各 baseline 的配置（可覆盖默认配置）",
+      "additionalProperties": false,
+      "properties": {
+        "vanilla": { "$ref": "#/$defs/BaselineConfig" },
+        "rag": { "$ref": "#/$defs/BaselineConfig" },
+        "mindlakevm": { "$ref": "#/$defs/BaselineConfig" }
+      }
+    },
+    "test_cases": {
+      "type": "array",
+      "description": "测试用例列表，至少 1 条",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/TestCase" }
+    },
+    "judges": {
+      "type": "array",
+      "description": "该场景使用的 judge 列表（覆盖默认 judge 集合）",
+      "items": { "$ref": "#/$defs/JudgeRef" }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "附加元数据",
+      "additionalProperties": true
+    }
+  },
+
+  "$defs": {
+    "ScenarioDocument": {
+      "title": "Scenario Document",
+      "description": "场景对应的源文档信息",
+      "type": "object",
+      "required": ["source"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "文档来源标识（文件路径或标题）"
+        },
+        "content_inline": {
+          "type": "string",
+          "description": "内联文档内容（与 content_path 二选一）"
+        },
+        "content_path": {
+          "type": "string",
+          "description": "文档内容文件路径（相对于项目根目录）"
+        },
+        "description": {
+          "type": "string",
+          "description": "文档说明"
+        }
+      }
+    },
+
+    "BaselineConfig": {
+      "title": "Baseline Config",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否启用此 baseline"
+        },
+        "system_prompt": {
+          "type": "string",
+          "description": "该 baseline 的系统提示词（vanilla/rag 专用）"
+        },
+        "rag_top_k": {
+          "type": "integer",
+          "description": "RAG 检索 top-k（rag baseline 专用）",
+          "default": 3
+        }
+      }
+    },
+
+    "TestCase": {
+      "title": "Test Case",
+      "type": "object",
+      "required": ["id", "user_input", "expects"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "测试用例唯一 ID",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+        },
+        "description": {
+          "type": "string",
+          "description": "测试用例说明"
+        },
+        "user_input": {
+          "type": "string",
+          "description": "用户输入内容",
+          "minLength": 1
+        },
+        "expects": {
+          "$ref": "#/$defs/TestExpectation"
+        },
+        "tags": {
+          "type": "array",
+          "description": "用例标签，如 guardrail / citation / schema / normal",
+          "items": { "type": "string" }
+        }
+      }
+    },
+
+    "TestExpectation": {
+      "title": "Test Expectation",
+      "description": "测试用例的成功判定条件",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "blocked": {
+          "type": "boolean",
+          "description": "期望是否被拦截（true = 应拦截，false = 不应拦截）"
+        },
+        "violations_include": {
+          "type": "array",
+          "description": "期望触发的约束关键词列表（partial match）",
+          "items": { "type": "string" }
+        },
+        "evidence_paths": {
+          "type": "array",
+          "description": "期望引用的 references 文件路径列表",
+          "items": { "type": "string" }
+        },
+        "output_contains": {
+          "type": "array",
+          "description": "期望输出包含的关键词列表（partial match）",
+          "items": { "type": "string" }
+        },
+        "output_schema_valid": {
+          "type": "boolean",
+          "description": "期望输出通过 N.schema 校验（type=rfc 场景适用）"
+        },
+        "trace_steps_completed": {
+          "type": "array",
+          "description": "期望完成的 T.path 步骤 ID 列表",
+          "items": { "type": "string" }
+        },
+        "custom_judge": {
+          "type": "string",
+          "description": "指定使用的自定义 judge ID"
+        }
+      }
+    },
+
+    "JudgeRef": {
+      "title": "Judge Reference",
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "judge ID，见 judge_spec_v0.1.md"
+        },
+        "weight": {
+          "type": "number",
+          "description": "该 judge 在成功率计算中的权重（默认 1.0）",
+          "default": 1.0
+        },
+        "fatal": {
+          "type": "boolean",
+          "description": "若为 true，该 judge 失败则整个用例判定为失败（无视其他 judge）",
+          "default": false
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "scenario_id": "sop-scale-guardrail",
+  "results_table": [
+    {
+      "baseline": "vanilla",
+      "success_rate": 0.2,
+      "token_cost": {
+        "input_tokens": 3800,
+        "output_tokens": 650,
+        "total_tokens": 4450
+      },
+      "citation_rate": 0.1,
+      "guardrail_block_rate": 0.15,
+      "false_positive_rate": 0.0
+    },
+    {
+      "baseline": "rag",
+      "success_rate": 0.5,
+      "token_cost": {
+        "input_tokens": 2900,
+        "output_tokens": 520,
+        "total_tokens": 3420
+      },
+      "citation_rate": 0.6,
+      "guardrail_block_rate": 0.4,
+      "false_positive_rate": 0.05
+    },
+    {
+      "baseline": "mindlakevm",
+      "success_rate": 0.9,
+      "token_cost": {
+        "input_tokens": 1580,
+        "output_tokens": 380,
+        "total_tokens": 1960
+      },
+      "citation_rate": 0.95,
+      "guardrail_block_rate": 0.95,
+      "false_positive_rate": 0.02
+    }
+  ],
+  "report_summary": {
+    "token_savings_pct": 0.56,
+    "success_rate_delta": 0.70,
+    "guardrail_accuracy": 0.95,
+    "highlight": "相比 Vanilla 节省 56% token，任务成功率从 20% 提升至 90%（+70%），门禁准确率 95%"
+  }
+}

@@ -1,0 +1,138 @@
+{
+  "kernel_id": "ops-sev1-incident-response-v1",
+  "cache_hit": false,
+  "similarity": 0.0,
+  "ir": {
+    "kernel_id": "ops-sev1-incident-response-v1",
+    "version": "0.3",
+    "compiled_at": "2025-02-27T10:00:00Z",
+    "source_doc": "生产环境 SEV1 故障应急响应 SOP v2025-10-01",
+    "compilation_strategy": "default",
+    "r": {
+      "domain": "ops.incident",
+      "object_type": "sop",
+      "semantic_space": "生产环境严重故障（SEV1）应急响应流程，面向值班 SRE，涵盖评估、升级、缓解三个阶段"
+    },
+    "n": {
+      "structure": "step_by_step",
+      "constraints": [
+        "输出必须包含受影响用户数量",
+        "输出必须说明故障级别（SEV1/SEV2/SEV3）",
+        "输出必须包含建议的缓解措施"
+      ],
+      "references": [
+        {
+          "path": "references/ESCALATION_MATRIX.md",
+          "scope": "escalation",
+          "required": true
+        },
+        {
+          "path": "references/SEVERITY_THRESHOLDS.md",
+          "scope": "classification",
+          "required": false
+        }
+      ]
+    },
+    "e": {
+      "format": "structured_text",
+      "target_entropy": "消除故障应对中的流程不确定性：确保关键决策点（升级阈值、操作禁令）有明确触发条件，不依赖执行者主观判断",
+      "hard_constraints": [
+        "高峰期（08:00-22:00）禁止执行扩缩容操作，除非有 CTO 书面授权（授权编号必须记录）",
+        "故障期间生产数据库禁止写操作，任何写操作需要 DBA 审批",
+        "受影响用户超过 1000 人时，必须在 15 分钟内发送外部通告"
+      ],
+      "soft_constraints": [
+        "建议在执行缓解措施前确认备份状态",
+        "建议在 War Room 开始前准备好监控大盘链接"
+      ],
+      "meta_ignorance": [
+        "文档未涵盖跨数据中心（multi-region）故障场景",
+        "文档未定义第三方服务依赖故障时的降级策略",
+        "文档未说明故障结束后的 Post-Mortem 触发条件"
+      ]
+    },
+    "t": {
+      "path": [
+        {
+          "id": "assess",
+          "name": "评估影响范围",
+          "description": "确定受影响的服务名称、用户数量和故障级别（SEV1/SEV2/SEV3）",
+          "decision_points": [
+            {
+              "condition": "受影响用户数 > 1000",
+              "if_true": "立即通知 CTO 并进入 escalate 步骤",
+              "if_false": "根据用户数确定通知范围，进入 notify 步骤"
+            }
+          ],
+          "requires_evidence": true
+        },
+        {
+          "id": "notify",
+          "name": "升级通知",
+          "description": "根据故障级别通知相应负责人",
+          "decision_points": [
+            {
+              "condition": "受影响用户数 > 1000 且距故障发现已超过 15 分钟",
+              "if_true": "立即发送外部通告（触发硬约束检查）",
+              "if_false": "按内部通道通知，记录 ticket"
+            }
+          ],
+          "requires_evidence": true
+        },
+        {
+          "id": "mitigate",
+          "name": "执行缓解措施",
+          "description": "优先回滚；如需扩容，检查是否满足高峰期授权条件",
+          "decision_points": [
+            {
+              "condition": "需要扩缩容 AND 当前时间在 08:00-22:00",
+              "if_true": "触发硬约束：要求 CTO 书面授权，blocked=true",
+              "if_false": "可执行扩缩容操作"
+            }
+          ],
+          "requires_evidence": false
+        }
+      ],
+      "cot_steps": [
+        "Step 1：确认故障现象和受影响的服务名称",
+        "Step 2：统计受影响用户数量，确定故障级别",
+        "Step 3：检查当前操作是否触发任何硬约束（高峰期/数据库写/通告时限）",
+        "Step 4：按 T.path 顺序执行，引用 references 中的联系人和阈值信息",
+        "Step 5：每步记录 trace，包括决策分支和执行结果"
+      ]
+    }
+  },
+  "artifacts": {
+    "skill_id": "ops-sev1-incident-response",
+    "skill_name": "SEV1 故障应急响应",
+    "description": "处理生产环境严重故障（SEV1），协调应急响应、升级通知和缓解措施。触发关键词：down、outage、SEV1、crash、故障、宕机",
+    "kernel_id": "ops-sev1-incident-response-v1",
+    "compiled_at": "2025-02-27T10:00:00Z",
+    "files_tree": [
+      {
+        "path": "SKILL.md",
+        "type": "skill_main",
+        "size_bytes": 2048,
+        "token_estimate": 820
+      },
+      {
+        "path": "references/ESCALATION_MATRIX.md",
+        "type": "reference",
+        "size_bytes": 1024,
+        "token_estimate": 380
+      },
+      {
+        "path": "references/SEVERITY_THRESHOLDS.md",
+        "type": "reference",
+        "size_bytes": 512,
+        "token_estimate": 180
+      },
+      {
+        "path": "assets/incident_report_template.md",
+        "type": "asset",
+        "size_bytes": 768,
+        "token_estimate": 290
+      }
+    ]
+  }
+}

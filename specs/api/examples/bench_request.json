@@ -1,0 +1,4 @@
+{
+  "scenario_id": "sop-scale-guardrail",
+  "baselines": ["vanilla", "rag", "mindlakevm"]
+}

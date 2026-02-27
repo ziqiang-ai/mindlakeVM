@@ -1,0 +1,571 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindlakevm.local/specs/rnet/ir_schema_v0.3.json",
+  "title": "SemanticKernelIR",
+  "description": "MindLakeVM 编译器输出的语义核中间表示（Intermediate Representation），包含 R/N/E/T 四核。",
+  "type": "object",
+  "required": ["kernel_id", "version", "r", "n", "e", "t"],
+  "additionalProperties": false,
+  "properties": {
+    "kernel_id": {
+      "type": "string",
+      "description": "全局唯一 Kernel ID，kebab-case，如 ops-sev1-incident-response-v1",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "version": {
+      "type": "string",
+      "description": "IR schema 版本，当前为 0.3",
+      "const": "0.3"
+    },
+    "compiled_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "编译时间戳（ISO 8601）"
+    },
+    "source_doc": {
+      "type": "string",
+      "description": "源文档标识或文件名"
+    },
+    "compilation_strategy": {
+      "type": "string",
+      "enum": ["minimal", "default", "detailed"],
+      "description": "编译策略"
+    },
+
+    "r": {
+      "$ref": "#/$defs/RCore"
+    },
+    "n": {
+      "$ref": "#/$defs/NCore"
+    },
+    "e": {
+      "$ref": "#/$defs/ECore"
+    },
+    "t": {
+      "$ref": "#/$defs/TCore"
+    }
+  },
+
+  "$defs": {
+    "RCore": {
+      "title": "R — Representation（语义坐标）",
+      "description": "将任务从自然语言变成可定位的语义坐标",
+      "type": "object",
+      "required": ["domain", "object_type", "semantic_space"],
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "type": "string",
+          "description": "领域标识，建议使用命名空间格式如 ops.incident / finance.reimbursement / engineering.rfc",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "object_type": {
+          "type": "string",
+          "description": "操作对象类型",
+          "enum": ["sop", "policy", "rfc", "checklist", "faq", "postmortem", "spec", "other"]
+        },
+        "semantic_space": {
+          "type": "string",
+          "description": "语义空间描述，一句话定位任务所在的知识域",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "version": {
+          "type": "string",
+          "description": "对应源文档版本，可选"
+        }
+      }
+    },
+
+    "NCore": {
+      "title": "N — Notation（知识注册）",
+      "description": "把长文档拆成可检索、可复用的资产目录",
+      "type": "object",
+      "required": ["structure"],
+      "additionalProperties": false,
+      "properties": {
+        "structure": {
+          "type": "string",
+          "description": "知识结构类型",
+          "enum": ["step_by_step", "decision_tree", "checklist", "matrix", "faq", "mixed"]
+        },
+        "schema": {
+          "type": ["object", "null"],
+          "description": "输出 JSON Schema（当 e.format=json 时建议填写）"
+        },
+        "constraints": {
+          "type": "array",
+          "description": "知识约束列表，如字段完整性要求",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "references": {
+          "type": "array",
+          "description": "引用资源列表（查表层文件）",
+          "items": { "$ref": "#/$defs/ReferenceEntry" },
+          "default": []
+        }
+      }
+    },
+
+    "ReferenceEntry": {
+      "title": "Reference Entry",
+      "type": "object",
+      "required": ["path", "scope"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "相对于 Skill 包根目录的文件路径，如 references/CONTACTS.md",
+          "pattern": "^references/.+\\.md$"
+        },
+        "scope": {
+          "type": "string",
+          "description": "该引用的使用场景，如 escalation / compliance / error_codes",
+          "minLength": 1
+        },
+        "required": {
+          "type": "boolean",
+          "description": "执行时是否必须引用此文件（影响 V2 引用校验）",
+          "default": false
+        }
+      }
+    },
+
+    "ECore": {
+      "title": "E — Entropy Control（熵控门禁）",
+      "description": "用可执行门禁把不确定性收敛成工程可控",
+      "type": "object",
+      "required": ["format", "target_entropy", "hard_constraints"],
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "type": "string",
+          "description": "输出格式",
+          "enum": ["markdown", "json", "structured_text"]
+        },
+        "target_entropy": {
+          "type": "string",
+          "description": "熵控目标描述，说明要把哪些不确定性消除",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "hard_constraints": {
+          "type": "array",
+          "description": "硬约束列表，触发任意一条则 blocked=true",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "soft_constraints": {
+          "type": "array",
+          "description": "软约束列表，不满足则降级提示或重试",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "meta_ignorance": {
+          "type": "array",
+          "description": "盲点列表：编译器识别到的文档未涵盖但可能被问到的领域",
+          "items": { "type": "string" },
+          "default": []
+        }
+      }
+    },
+
+    "TCore": {
+      "title": "T — Transformation（执行路径）",
+      "description": "把执行过程显式化成可追溯路径与决策点",
+      "type": "object",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "array",
+          "description": "执行路径，有序步骤列表",
+          "items": { "$ref": "#/$defs/PathStep" },
+          "minItems": 1
+        },
+        "cot_steps": {
+          "type": "array",
+          "description": "思维链模板，提示 LLM 的推理顺序",
+          "items": { "type": "string" },
+          "default": []
+        }
+      }
+    },
+
+    "PathStep": {
+      "title": "Path Step",
+      "type": "object",
+      "required": ["id", "name", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "步骤唯一 ID，kebab-case",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+        },
+        "name": {
+          "type": "string",
+          "description": "步骤名称（展示用）",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "description": {
+          "type": "string",
+          "description": "步骤说明",
+          "minLength": 1
+        },
+        "decision_points": {
+          "type": "array",
+          "description": "该步骤的决策点列表",
+          "items": { "$ref": "#/$defs/DecisionPoint" },
+          "default": []
+        },
+        "tool_required": {
+          "type": "string",
+          "description": "可选，该步骤需要调用的工具名称"
+        },
+        "requires_evidence": {
+          "type": "boolean",
+          "description": "该步骤输出是否必须引用 references",
+          "default": false
+        }
+      }
+    },
+
+    "DecisionPoint": {
+      "title": "Decision Point",
+      "type": "object",
+      "required": ["condition", "if_true"],
+      "additionalProperties": false,
+      "properties": {
+        "condition": {
+          "type": "string",
+          "description": "触发条件（自然语言）",
+          "minLength": 1
+        },
+        "if_true": {
+          "type": "string",
+          "description": "条件为真时跳转到的步骤 ID 或动作描述"
+        },
+        "if_false": {
+          "type": "string",
+          "description": "条件为假时的处理（可选，默认继续当前步骤）"
+        }
+      }
+    },
+
+    "SkillPackage": {
+      "title": "SkillPackage",
+      "description": "编译器生成的 Skill 包清单",
+      "type": "object",
+      "required": ["skill_id", "skill_name", "files_tree"],
+      "additionalProperties": false,
+      "properties": {
+        "skill_id": {
+          "type": "string",
+          "description": "Skill 唯一 ID，与目录同名，kebab-case",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+        },
+        "skill_name": {
+          "type": "string",
+          "description": "Skill 显示名称"
+        },
+        "description": {
+          "type": "string",
+          "description": "Skill 功能描述（对应 SKILL.md frontmatter description）"
+        },
+        "files_tree": {
+          "type": "array",
+          "description": "Skill 包内所有文件的列表",
+          "items": { "$ref": "#/$defs/SkillFile" }
+        },
+        "kernel_id": {
+          "type": "string",
+          "description": "对应的 SemanticKernelIR kernel_id"
+        },
+        "compiled_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+
+    "SkillFile": {
+      "title": "Skill File Entry",
+      "type": "object",
+      "required": ["path", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "相对于 Skill 包根目录的文件路径"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["skill_main", "reference", "asset", "script", "test"],
+          "description": "文件类型"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "description": "文件大小（字节）"
+        },
+        "token_estimate": {
+          "type": "integer",
+          "description": "估算 token 数量"
+        }
+      }
+    },
+
+    "RunResult": {
+      "title": "RunResult",
+      "description": "POST /run 的响应体",
+      "type": "object",
+      "required": ["output_text", "blocked", "trace", "evidence", "validation"],
+      "additionalProperties": false,
+      "properties": {
+        "output_text": {
+          "type": "string",
+          "description": "最终输出文本（blocked=true 时为拦截提示）"
+        },
+        "blocked": {
+          "type": "boolean",
+          "description": "是否被硬约束拦截"
+        },
+        "violations": {
+          "type": "array",
+          "description": "触发的硬约束列表（blocked=true 时有值）",
+          "items": { "$ref": "#/$defs/Violation" },
+          "default": []
+        },
+        "trace": {
+          "type": "array",
+          "description": "执行路径 trace，对应 T.path 每步状态",
+          "items": { "$ref": "#/$defs/TraceStep" }
+        },
+        "evidence": {
+          "type": "array",
+          "description": "引用到的 references 文件/片段",
+          "items": { "$ref": "#/$defs/EvidenceItem" }
+        },
+        "validation": {
+          "$ref": "#/$defs/ValidationResult"
+        },
+        "usage": {
+          "$ref": "#/$defs/TokenUsage"
+        }
+      }
+    },
+
+    "Violation": {
+      "title": "Violation",
+      "type": "object",
+      "required": ["constraint", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "constraint": {
+          "type": "string",
+          "description": "触发的硬约束原文"
+        },
+        "reason": {
+          "type": "string",
+          "description": "触发原因说明"
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["hard", "soft"],
+          "default": "hard"
+        }
+      }
+    },
+
+    "TraceStep": {
+      "title": "Trace Step",
+      "type": "object",
+      "required": ["step_id", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "step_id": {
+          "type": "string",
+          "description": "对应 T.path 中的 PathStep.id"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "running", "completed", "skipped", "blocked"],
+          "description": "步骤执行状态"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "decision_taken": {
+          "type": "string",
+          "description": "若步骤有决策点，记录实际走的分支"
+        },
+        "notes": {
+          "type": "string",
+          "description": "该步骤的补充说明"
+        }
+      }
+    },
+
+    "EvidenceItem": {
+      "title": "Evidence Item",
+      "type": "object",
+      "required": ["source_path"],
+      "additionalProperties": false,
+      "properties": {
+        "source_path": {
+          "type": "string",
+          "description": "引用文件的路径（来自 n.references）"
+        },
+        "excerpt": {
+          "type": "string",
+          "description": "引用片段内容"
+        },
+        "relevance": {
+          "type": "string",
+          "description": "为什么引用该片段（相关性说明）"
+        }
+      }
+    },
+
+    "ValidationResult": {
+      "title": "Validation Result",
+      "type": "object",
+      "required": ["passed"],
+      "additionalProperties": false,
+      "properties": {
+        "passed": {
+          "type": "boolean",
+          "description": "所有验证器是否全部通过"
+        },
+        "schema_valid": {
+          "type": ["boolean", "null"],
+          "description": "V1: 输出是否通过 N.schema 校验"
+        },
+        "evidence_sufficient": {
+          "type": ["boolean", "null"],
+          "description": "V2: 是否满足最小引用要求"
+        },
+        "stop_condition_met": {
+          "type": ["boolean", "null"],
+          "description": "V3: 是否因循环/超步数被停止"
+        },
+        "warnings": {
+          "type": "array",
+          "description": "软约束不满足时的 warning 列表",
+          "items": { "type": "string" },
+          "default": []
+        }
+      }
+    },
+
+    "TokenUsage": {
+      "title": "Token Usage",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "input_tokens": { "type": "integer" },
+        "output_tokens": { "type": "integer" },
+        "total_tokens": { "type": "integer" }
+      }
+    },
+
+    "BenchResult": {
+      "title": "BenchResult",
+      "description": "POST /bench 的响应体",
+      "type": "object",
+      "required": ["scenario_id", "results_table", "report_summary"],
+      "additionalProperties": false,
+      "properties": {
+        "scenario_id": {
+          "type": "string",
+          "description": "对应的场景 ID"
+        },
+        "results_table": {
+          "type": "array",
+          "description": "每个 baseline 的指标行",
+          "items": { "$ref": "#/$defs/BenchRow" }
+        },
+        "report_summary": {
+          "$ref": "#/$defs/BenchSummary"
+        }
+      }
+    },
+
+    "BenchRow": {
+      "title": "Bench Row",
+      "type": "object",
+      "required": ["baseline", "success_rate", "token_cost", "citation_rate", "guardrail_block_rate"],
+      "additionalProperties": false,
+      "properties": {
+        "baseline": {
+          "type": "string",
+          "enum": ["vanilla", "rag", "mindlakevm"],
+          "description": "对比组名称"
+        },
+        "success_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "任务成功率（0.0~1.0）"
+        },
+        "token_cost": {
+          "$ref": "#/$defs/TokenUsage"
+        },
+        "citation_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "输出引用 evidence 的比率"
+        },
+        "guardrail_block_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "应拦截时正确拦截的比率"
+        },
+        "false_positive_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "误拦截率（不该拦截时拦截）"
+        }
+      }
+    },
+
+    "BenchSummary": {
+      "title": "Bench Summary",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "token_savings_pct": {
+          "type": "number",
+          "description": "相比 vanilla，mindlakevm 节省的 token 比例（正值=节省）"
+        },
+        "success_rate_delta": {
+          "type": "number",
+          "description": "相比 vanilla，mindlakevm 成功率提升幅度"
+        },
+        "guardrail_accuracy": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "mindlakevm 门禁准确率"
+        },
+        "highlight": {
+          "type": "string",
+          "description": "路演摘要卡文字，如 节省 40% token，成功率提升 30%"
+        }
+      }
+    }
+  }
+}

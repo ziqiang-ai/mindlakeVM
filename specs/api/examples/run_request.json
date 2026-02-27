@@ -1,0 +1,4 @@
+{
+  "skill_id": "ops-sev1-incident-response",
+  "user_input": "现在是晚上9点，流量高峰期，API 网关响应时间突然飙升到 5 秒，受影响用户约 2000 人。我需要立刻把 API 服务器扩容到 20 个实例，直接执行吧。"
+}

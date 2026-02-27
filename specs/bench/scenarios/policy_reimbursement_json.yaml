@@ -1,0 +1,195 @@
+id: policy-reimbursement-json
+name: 政策问答场景（报销审批矩阵）
+type: policy
+description: |
+  验证系统能否正确引用报销政策的审批矩阵和例外条款，给出准确的审批路径判断。
+  核心挑战：政策包含复杂的金额阈值、类别规则和例外条款，Vanilla 容易猜测而非引用。
+  MindLakeOS 通过 N 核渐进披露，精准引用对应条款并给出可核查的答案。
+
+skill_id: finance-reimbursement-policy
+
+document:
+  source: "员工报销政策 v2025-Q1"
+  content_inline: |
+    # 员工报销政策
+
+    **版本**：v2025-Q1
+    **生效日期**：2025-01-01
+    **适用范围**：全体正式员工
+
+    ## 1. 报销类别与额度上限
+
+    | 类别 | 月度上限 | 单笔上限 | 说明 |
+    |------|---------|---------|------|
+    | 交通（市内） | ¥500 | ¥200 | 含打车、公交、地铁 |
+    | 交通（出差） | 无上限 | 无上限 | 需提交差旅申请单 |
+    | 餐饮（工作餐） | ¥800 | ¥150/人 | 需附参与人员名单 |
+    | 餐饮（客户招待） | ¥3000 | ¥500/人 | 需附客户信息和商业目的 |
+    | 办公用品 | ¥300 | ¥300 | 无需事先审批 |
+    | 培训/学习 | ¥5000/年 | ¥2000 | 需部门主管预审 |
+    | 软件订阅 | ¥200/月 | ¥200 | 需 IT 部门确认 |
+
+    ## 2. 审批矩阵
+
+    | 报销金额 | 审批流程 |
+    |---------|---------|
+    | < ¥500 | 直属上级审批 |
+    | ¥500 ~ ¥2000 | 直属上级 + 财务确认 |
+    | ¥2000 ~ ¥10000 | 直属上级 + 部门负责人 + 财务 |
+    | > ¥10000 | 直属上级 + 部门负责人 + CFO |
+
+    ## 3. 例外与特殊规定
+
+    ### 3.1 加急报销
+    - 适用场景：金额 > ¥5000 且有合理业务紧急性
+    - 需提交：加急申请表 + 业务负责人批准邮件
+    - 处理时限：3 个工作日（普通为 15 个工作日）
+
+    ### 3.2 跨类别报销
+    - 单次活动涉及多个类别时，合并计算总金额
+    - 总金额超过任一类别上限时，取最严格的规则
+
+    ### 3.3 外籍员工
+    - 报销以 CNY 结算，按申请日汇率换算
+    - 境外差旅的单笔上限：$500（美元）
+
+    ### 3.4 试用期员工
+    - 试用期内报销上限为正式员工的 50%
+    - 无论金额，均需部门负责人签字
+
+    ## 4. 不予报销的情形
+
+    以下情形提交的报销申请将被驳回：
+    - 超过发生日期 **90 天**的票据
+    - 无原始票据（截图/扫描件需经财务确认真实性）
+    - 个人娱乐消费（电影、游戏、健身等）
+    - 已通过其他渠道报销的费用
+
+baselines:
+  vanilla:
+    enabled: true
+    system_prompt: |
+      You are a helpful assistant. Answer questions about company policies accurately.
+  rag:
+    enabled: true
+    rag_top_k: 4
+  mindlakevm:
+    enabled: true
+
+test_cases:
+
+  - id: reimbursement-amount-routing
+    description: 查询特定金额的审批流程（应引用审批矩阵）
+    tags: [citation, matrix_lookup, normal]
+    user_input: |
+      我有一笔 ¥3500 的客户招待餐饮费用需要报销，请问需要哪些人审批？
+      需要什么材料？
+    expects:
+      blocked: false
+      evidence_paths:
+        - "references/APPROVAL_MATRIX.md"
+      output_contains:
+        - "部门负责人"
+        - "财务"
+        - "客户信息"
+        - "商业目的"
+      trace_steps_completed:
+        - "classify"
+        - "lookup_approval"
+
+  - id: reimbursement-over-limit
+    description: 报销金额超过类别上限（应指出超限并说明规则）
+    tags: [policy_check, limit, normal]
+    user_input: |
+      上个月我在一次团队建设活动中花了 ¥2000 的餐饮费，人均超过 ¥150，
+      能报销吗？
+    expects:
+      blocked: false
+      output_contains:
+        - "150"
+        - "人均"
+      evidence_paths:
+        - "references/CATEGORY_LIMITS.md"
+
+  - id: reimbursement-expired-receipt
+    description: 超过90天的票据（应告知不予报销）
+    tags: [rejection, expired, normal]
+    user_input: |
+      我有一张三个月前（2024年11月）的出租车发票，金额¥80，现在能报销吗？
+    expects:
+      blocked: false
+      output_contains:
+        - "90天"
+        - "不予报销"
+      evidence_paths:
+        - "references/REJECTION_RULES.md"
+
+  - id: reimbursement-probation-employee
+    description: 试用期员工报销（应适用 50% 上限规则）
+    tags: [exception, probation, normal]
+    user_input: |
+      我是新入职的试用期员工，需要报销一笔 ¥600 的市内交通费，流程是什么？
+    expects:
+      blocked: false
+      output_contains:
+        - "试用期"
+        - "50%"
+        - "部门负责人"
+      evidence_paths:
+        - "references/EXCEPTION_RULES.md"
+
+  - id: reimbursement-large-amount-approval
+    description: 超万元报销的完整审批流程（应引用审批矩阵）
+    tags: [citation, matrix_lookup, high_value]
+    user_input: |
+      我需要报销一次大型客户会议的费用，总计约 ¥15000，涵盖场地租用和餐饮。
+      请告诉我完整的审批流程和所需材料。
+    expects:
+      blocked: false
+      output_contains:
+        - "CFO"
+        - "部门负责人"
+        - "财务"
+      evidence_paths:
+        - "references/APPROVAL_MATRIX.md"
+      trace_steps_completed:
+        - "classify"
+        - "lookup_approval"
+        - "list_materials"
+
+  - id: reimbursement-urgent-application
+    description: 加急报销条件查询
+    tags: [exception, urgent, normal]
+    user_input: |
+      有一笔 ¥8000 的紧急采购费用，普通审批来不及，可以走加急流程吗？
+      需要什么条件？
+    expects:
+      blocked: false
+      output_contains:
+        - "加急"
+        - "5000"
+        - "3个工作日"
+        - "业务负责人"
+      evidence_paths:
+        - "references/EXCEPTION_RULES.md"
+
+judges:
+  - id: no_false_positive
+    fatal: true
+    weight: 1.0
+  - id: evidence_cited
+    fatal: false
+    weight: 1.0
+  - id: output_contains_keywords
+    fatal: false
+    weight: 0.8
+  - id: trace_coverage
+    fatal: false
+    weight: 0.5
+
+metadata:
+  rnet_core: N
+  demo_priority: medium
+  expected_vanilla_success_rate: 0.3
+  expected_mindlakevm_success_rate: 0.85
+  highlight: "Vanilla 依赖模型记忆猜测，MindLakeOS 精准引用条款给出可核查答案"

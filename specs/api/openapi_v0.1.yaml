@@ -1,0 +1,721 @@
+openapi: "3.1.0"
+info:
+  title: MindLakeOS Demo API
+  version: "0.1"
+  description: |
+    MindLakeOS Demo（Doc2Skill 认知编译平台）的 REST API 合同。
+    
+    覆盖四个核心端点：
+    - `POST /compile` — 文档编译，生成 SemanticKernelIR + Skill 目录包
+    - `GET /skills` — 列出所有已编译 Skill
+    - `GET /skills/{id}` — 获取单个 Skill 详情
+    - `POST /run` — 挂载 Skill 执行用户输入，返回 trace/evidence/violations
+    - `POST /bench` — 运行对比评测（Vanilla vs RAG vs MindLakeOS）
+
+servers:
+  - url: http://localhost:8000
+    description: 本地开发服务器
+
+tags:
+  - name: compile
+    description: 文档编译（固态 → IR → Skill）
+  - name: skills
+    description: Skill 包管理
+  - name: run
+    description: Skill 执行（挂载 → 执行 → trace）
+  - name: bench
+    description: 对比评测
+
+paths:
+
+  /compile:
+    post:
+      tags: [compile]
+      operationId: compileDocument
+      summary: 编译文档，生成 SemanticKernelIR 和 Skill 包
+      description: |
+        接受文档内容（或文档 ID），使用指定策略编译为 SemanticKernelIR（R/N/E/T 四核）
+        并生成对应的 Skill 包目录结构。
+        
+        支持缓存：相同内容的请求会命中缓存，返回 `cache_hit=true` 和 `similarity` 分数。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompileRequest"
+            examples:
+              sop_example:
+                summary: SOP 文档编译
+                value:
+                  task_description: "生产环境 SEV1 故障应急响应 SOP"
+                  document_content: "# 故障应急响应 SOP\n\n## 适用范围\n...\n\n## 禁止事项\n- 高峰期（08:00-22:00）禁止扩缩容操作"
+                  strategy: "default"
+                  force_recompile: false
+                  enable_probe: true
+      responses:
+        "200":
+          description: 编译成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompileResponse"
+              examples:
+                success:
+                  summary: 编译成功响应
+                  value:
+                    kernel_id: "ops-sev1-incident-response-v1"
+                    cache_hit: false
+                    similarity: 0.0
+                    ir:
+                      kernel_id: "ops-sev1-incident-response-v1"
+                      version: "0.3"
+                      compiled_at: "2025-02-27T10:00:00Z"
+                      r:
+                        domain: "ops.incident"
+                        object_type: "sop"
+                        semantic_space: "生产环境严重故障（SEV1）应急响应流程，面向值班 SRE"
+                      n:
+                        structure: "step_by_step"
+                        constraints: ["必须包含受影响用户数量"]
+                        references:
+                          - path: "references/ESCALATION_MATRIX.md"
+                            scope: "escalation"
+                            required: true
+                      e:
+                        format: "structured_text"
+                        target_entropy: "消除故障应对中的流程不确定性"
+                        hard_constraints:
+                          - "高峰期（08:00-22:00）禁止执行扩缩容操作，除非有 CTO 书面授权"
+                        soft_constraints: []
+                        meta_ignorance: ["文档未涵盖跨数据中心故障场景"]
+                      t:
+                        path:
+                          - id: "assess"
+                            name: "评估影响范围"
+                            description: "确定受影响的服务、用户数量和严重程度"
+                            requires_evidence: true
+                          - id: "mitigate"
+                            name: "执行缓解措施"
+                            description: "执行回滚或故障转移操作"
+                            requires_evidence: false
+                        cot_steps:
+                          - "首先确认故障现象和受影响范围"
+                          - "检查是否触发任何硬约束条件"
+                    artifacts:
+                      skill_id: "ops-sev1-incident-response"
+                      skill_name: "SEV1 故障应急响应"
+                      files_tree:
+                        - path: "SKILL.md"
+                          type: "skill_main"
+                          token_estimate: 800
+                        - path: "references/ESCALATION_MATRIX.md"
+                          type: "reference"
+                          token_estimate: 400
+        "400":
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: 文档内容无法编译（结构过于简单或无法识别类型）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: 编译器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skills:
+    get:
+      tags: [skills]
+      operationId: listSkills
+      summary: 列出所有已编译 Skill
+      responses:
+        "200":
+          description: Skill 列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [skills]
+                properties:
+                  skills:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SkillSummary"
+              examples:
+                list:
+                  summary: Skill 列表示例
+                  value:
+                    skills:
+                      - skill_id: "ops-sev1-incident-response"
+                        skill_name: "SEV1 故障应急响应"
+                        description: "处理生产环境严重故障，协调应急响应和通告流程"
+                        domain: "ops.incident"
+                        object_type: "sop"
+                        compiled_at: "2025-02-27T10:00:00Z"
+                      - skill_id: "finance-reimbursement-policy"
+                        skill_name: "报销政策审核"
+                        description: "根据报销政策审核报销申请，判断额度、类别和审批路径"
+                        domain: "finance.reimbursement"
+                        object_type: "policy"
+                        compiled_at: "2025-02-27T11:00:00Z"
+
+  /skills/{id}:
+    get:
+      tags: [skills]
+      operationId: getSkill
+      summary: 获取单个 Skill 详情
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Skill ID（kebab-case），如 `ops-sev1-incident-response`
+      responses:
+        "200":
+          description: Skill 详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillDetail"
+        "404":
+          description: Skill 不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /run:
+    post:
+      tags: [run]
+      operationId: runSkill
+      summary: 挂载 Skill 执行用户输入
+      description: |
+        挂载指定 Skill，对用户输入按 T.path 执行，返回：
+        - `output_text`：最终输出（或拦截提示）
+        - `blocked`：是否被 E 核硬约束拦截
+        - `violations`：触发的约束列表
+        - `trace`：T.path 每步执行状态
+        - `evidence`：引用到的 references 片段
+        - `validation`：V1/V2/V3 校验结果
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunRequest"
+            examples:
+              guardrail_trigger:
+                summary: 触发硬约束（应被拦截）
+                value:
+                  skill_id: "ops-sev1-incident-response"
+                  user_input: "现在是晚上9点，流量高峰，我需要紧急扩容 API 服务器，直接执行吧"
+              normal_query:
+                summary: 正常查询（应正常执行）
+                value:
+                  skill_id: "ops-sev1-incident-response"
+                  user_input: "服务 A 出现故障，受影响用户约 500 人，应该怎么处理？"
+      responses:
+        "200":
+          description: 执行结果（无论是否被拦截，均返回 200）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunResponse"
+              examples:
+                blocked:
+                  summary: 被硬约束拦截
+                  value:
+                    output_text: "⛔ 操作被拦截：当前时间（21:00）处于高峰期，扩缩容操作需要 CTO 书面授权后方可执行。请提供授权文件编号后重试。"
+                    blocked: true
+                    violations:
+                      - constraint: "高峰期（08:00-22:00）禁止执行扩缩容操作，除非有 CTO 书面授权"
+                        reason: "用户请求在高峰期（21:00）执行扩容操作，未提供 CTO 授权"
+                        severity: "hard"
+                    trace:
+                      - step_id: "assess"
+                        status: "completed"
+                      - step_id: "mitigate"
+                        status: "blocked"
+                    evidence:
+                      - source_path: "references/ESCALATION_MATRIX.md"
+                        excerpt: "高峰期（08:00-22:00）任何扩缩容操作必须有 CTO 书面授权..."
+                        relevance: "当前操作触发高峰期扩容约束"
+                    validation:
+                      passed: false
+                      schema_valid: null
+                      evidence_sufficient: true
+                      stop_condition_met: null
+                      warnings: []
+                    usage:
+                      input_tokens: 1200
+                      output_tokens: 150
+                      total_tokens: 1350
+                normal:
+                  summary: 正常执行完成
+                  value:
+                    output_text: "## 故障响应建议\n\n**受影响范围**：服务 A，约 500 名用户...\n\n**建议操作**：..."
+                    blocked: false
+                    violations: []
+                    trace:
+                      - step_id: "assess"
+                        status: "completed"
+                        decision_taken: "用户数 500 < 1000，无需升级至 CTO"
+                      - step_id: "mitigate"
+                        status: "completed"
+                    evidence:
+                      - source_path: "references/ESCALATION_MATRIX.md"
+                        excerpt: "受影响用户 < 1000 时，由值班 SRE 自主处理..."
+                        relevance: "确认用户数阈值，无需升级"
+                    validation:
+                      passed: true
+                      schema_valid: null
+                      evidence_sufficient: true
+                      stop_condition_met: false
+                      warnings: []
+                    usage:
+                      input_tokens: 1500
+                      output_tokens: 400
+                      total_tokens: 1900
+        "400":
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Skill 不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /bench:
+    post:
+      tags: [bench]
+      operationId: runBench
+      summary: 运行对比评测
+      description: |
+        对指定场景运行多组 baseline 的对比评测：
+        - `vanilla`：直接问模型（无 Skill）
+        - `rag`：RAG 检索后问模型
+        - `mindlakevm`：compile → mount skill → run with verifier
+        
+        返回指标对比表和摘要卡。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BenchRequest"
+            examples:
+              sop_bench:
+                summary: SOP 场景评测
+                value:
+                  scenario_id: "sop-scale-guardrail"
+                  baselines: ["vanilla", "rag", "mindlakevm"]
+      responses:
+        "200":
+          description: 评测结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BenchResponse"
+              examples:
+                result:
+                  summary: 评测结果示例
+                  value:
+                    scenario_id: "sop-scale-guardrail"
+                    results_table:
+                      - baseline: "vanilla"
+                        success_rate: 0.3
+                        token_cost:
+                          input_tokens: 3200
+                          output_tokens: 600
+                          total_tokens: 3800
+                        citation_rate: 0.1
+                        guardrail_block_rate: 0.2
+                        false_positive_rate: 0.0
+                      - baseline: "rag"
+                        success_rate: 0.5
+                        token_cost:
+                          input_tokens: 2800
+                          output_tokens: 500
+                          total_tokens: 3300
+                        citation_rate: 0.6
+                        guardrail_block_rate: 0.4
+                        false_positive_rate: 0.05
+                      - baseline: "mindlakevm"
+                        success_rate: 0.9
+                        token_cost:
+                          input_tokens: 1500
+                          output_tokens: 400
+                          total_tokens: 1900
+                        citation_rate: 0.95
+                        guardrail_block_rate: 0.95
+                        false_positive_rate: 0.02
+                    report_summary:
+                      token_savings_pct: 0.50
+                      success_rate_delta: 0.60
+                      guardrail_accuracy: 0.95
+                      highlight: "相比 Vanilla 节省 50% token，任务成功率提升 60%，门禁准确率 95%"
+        "400":
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: 场景不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  schemas:
+
+    CompileRequest:
+      type: object
+      required: [task_description]
+      properties:
+        task_description:
+          type: string
+          description: 任务描述或文档标题（必填）
+          minLength: 1
+          maxLength: 1024
+        document_content:
+          type: string
+          description: 文档正文内容（与 document_id 二选一）
+        document_id:
+          type: string
+          description: 已上传文档的 ID（与 document_content 二选一）
+        strategy:
+          type: string
+          enum: [minimal, default, detailed]
+          default: default
+          description: 编译策略。minimal=最精简，default=标准，detailed=最详尽（兜底）
+        force_recompile:
+          type: boolean
+          default: false
+          description: 强制重新编译，忽略缓存
+        enable_probe:
+          type: boolean
+          default: false
+          description: 是否启用 MetaIgnoranceProbe（盲点探测），填充 e.meta_ignorance
+
+    CompileResponse:
+      type: object
+      required: [kernel_id, cache_hit, ir, artifacts]
+      properties:
+        kernel_id:
+          type: string
+          description: 编译产出的 Kernel ID
+        cache_hit:
+          type: boolean
+          description: 是否命中缓存
+        similarity:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          description: 与缓存 IR 的相似度（cache_hit=false 时为 0.0）
+        ir:
+          $ref: "#/components/schemas/SemanticKernelIR"
+        artifacts:
+          $ref: "#/components/schemas/SkillPackage"
+
+    RunRequest:
+      type: object
+      required: [skill_id, user_input]
+      properties:
+        skill_id:
+          type: string
+          description: 要挂载的 Skill ID
+        user_input:
+          type: string
+          description: 用户输入（问题或指令）
+          minLength: 1
+          maxLength: 8192
+
+    RunResponse:
+      type: object
+      required: [output_text, blocked, violations, trace, evidence, validation]
+      properties:
+        output_text:
+          type: string
+          description: 最终输出文本（blocked=true 时为拦截提示）
+        blocked:
+          type: boolean
+          description: 是否被硬约束拦截
+        violations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Violation"
+        trace:
+          type: array
+          items:
+            $ref: "#/components/schemas/TraceStep"
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvidenceItem"
+        validation:
+          $ref: "#/components/schemas/ValidationResult"
+        usage:
+          $ref: "#/components/schemas/TokenUsage"
+
+    BenchRequest:
+      type: object
+      required: [scenario_id]
+      properties:
+        scenario_id:
+          type: string
+          description: 场景 ID，对应 specs/bench/scenarios/*.yaml 中的 id 字段
+        baselines:
+          type: array
+          items:
+            type: string
+            enum: [vanilla, rag, mindlakevm]
+          default: [vanilla, rag, mindlakevm]
+          description: 要运行的对比组，默认全部
+
+    BenchResponse:
+      type: object
+      required: [scenario_id, results_table, report_summary]
+      properties:
+        scenario_id:
+          type: string
+        results_table:
+          type: array
+          items:
+            $ref: "#/components/schemas/BenchRow"
+        report_summary:
+          $ref: "#/components/schemas/BenchSummary"
+
+    SkillSummary:
+      type: object
+      required: [skill_id, skill_name, description, domain, object_type, compiled_at]
+      properties:
+        skill_id:
+          type: string
+        skill_name:
+          type: string
+        description:
+          type: string
+        domain:
+          type: string
+        object_type:
+          type: string
+        compiled_at:
+          type: string
+          format: date-time
+
+    SkillDetail:
+      allOf:
+        - $ref: "#/components/schemas/SkillSummary"
+        - type: object
+          required: [ir, files_tree]
+          properties:
+            ir:
+              $ref: "#/components/schemas/SemanticKernelIR"
+            files_tree:
+              type: array
+              items:
+                $ref: "#/components/schemas/SkillFile"
+
+    SemanticKernelIR:
+      type: object
+      required: [kernel_id, version, r, n, e, t]
+      description: R/N/E/T 四核中间表示，详见 specs/rnet/ir_schema_v0.3.json
+      properties:
+        kernel_id:
+          type: string
+        version:
+          type: string
+        compiled_at:
+          type: string
+          format: date-time
+        source_doc:
+          type: string
+        compilation_strategy:
+          type: string
+          enum: [minimal, default, detailed]
+        r:
+          type: object
+          description: R 核 — 详见 ir_schema_v0.3.json#/$defs/RCore
+        n:
+          type: object
+          description: N 核 — 详见 ir_schema_v0.3.json#/$defs/NCore
+        e:
+          type: object
+          description: E 核 — 详见 ir_schema_v0.3.json#/$defs/ECore
+        t:
+          type: object
+          description: T 核 — 详见 ir_schema_v0.3.json#/$defs/TCore
+
+    SkillPackage:
+      type: object
+      required: [skill_id, skill_name, files_tree]
+      properties:
+        skill_id:
+          type: string
+        skill_name:
+          type: string
+        description:
+          type: string
+        files_tree:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillFile"
+        kernel_id:
+          type: string
+        compiled_at:
+          type: string
+          format: date-time
+
+    SkillFile:
+      type: object
+      required: [path, type]
+      properties:
+        path:
+          type: string
+        type:
+          type: string
+          enum: [skill_main, reference, asset, script, test]
+        size_bytes:
+          type: integer
+        token_estimate:
+          type: integer
+
+    Violation:
+      type: object
+      required: [constraint, reason]
+      properties:
+        constraint:
+          type: string
+        reason:
+          type: string
+        severity:
+          type: string
+          enum: [hard, soft]
+          default: hard
+
+    TraceStep:
+      type: object
+      required: [step_id, status]
+      properties:
+        step_id:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, completed, skipped, blocked]
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        decision_taken:
+          type: string
+        notes:
+          type: string
+
+    EvidenceItem:
+      type: object
+      required: [source_path]
+      properties:
+        source_path:
+          type: string
+        excerpt:
+          type: string
+        relevance:
+          type: string
+
+    ValidationResult:
+      type: object
+      required: [passed]
+      properties:
+        passed:
+          type: boolean
+        schema_valid:
+          type: ["boolean", "null"]
+        evidence_sufficient:
+          type: ["boolean", "null"]
+        stop_condition_met:
+          type: ["boolean", "null"]
+        warnings:
+          type: array
+          items:
+            type: string
+
+    TokenUsage:
+      type: object
+      properties:
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+
+    BenchRow:
+      type: object
+      required: [baseline, success_rate, token_cost, citation_rate, guardrail_block_rate]
+      properties:
+        baseline:
+          type: string
+          enum: [vanilla, rag, mindlakevm]
+        success_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+        token_cost:
+          $ref: "#/components/schemas/TokenUsage"
+        citation_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+        guardrail_block_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+        false_positive_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    BenchSummary:
+      type: object
+      properties:
+        token_savings_pct:
+          type: number
+        success_rate_delta:
+          type: number
+        guardrail_accuracy:
+          type: number
+          minimum: 0
+          maximum: 1
+        highlight:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: 错误代码，如 INVALID_REQUEST / COMPILE_FAILED / SKILL_NOT_FOUND
+        message:
+          type: string
+          description: 人类可读的错误说明
+        details:
+          type: object
+          description: 附加错误信息（可选）

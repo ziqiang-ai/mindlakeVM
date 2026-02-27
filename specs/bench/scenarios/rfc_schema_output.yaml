@@ -1,0 +1,199 @@
+id: rfc-schema-output
+name: RFC 技术规格场景（结构化 JSON 输出）
+type: rfc
+description: |
+  验证系统能否按照 RFC 文档中定义的 schema 输出合法的 JSON 方案。
+  核心挑战：RFC 要求输出包含特定字段的结构化 JSON，Vanilla 大概率格式不合规或字段缺失。
+  MindLakeOS 通过 N.schema 定义输出契约，E 核格式约束确保 JSON 合法，V1 校验器验收。
+
+skill_id: engineering-api-design-rfc
+
+document:
+  source: "API 网关设计规范 RFC-2025-001"
+  content_inline: |
+    # API 网关设计规范
+
+    **RFC 编号**：RFC-2025-001
+    **状态**：草案
+    **作者**：平台工程团队
+
+    ## 1. 背景
+
+    本规范定义新一代 API 网关的核心配置接口，要求所有输出方案符合本规范中定义的 JSON Schema。
+
+    ## 2. 核心配置字段
+
+    所有 API 网关配置方案必须包含以下字段：
+
+    | 字段 | 类型 | 必填 | 说明 |
+    |------|------|------|------|
+    | `gateway_id` | string | ✅ | 网关唯一标识，格式：`gw-{env}-{name}` |
+    | `upstream_url` | string | ✅ | 后端服务地址（HTTP/HTTPS） |
+    | `rate_limit` | object | ✅ | 限流配置 |
+    | `rate_limit.requests_per_second` | integer | ✅ | 每秒最大请求数 |
+    | `rate_limit.burst` | integer | ✅ | 突发请求容量 |
+    | `auth` | object | ✅ | 认证配置 |
+    | `auth.type` | string | ✅ | 认证类型：`jwt` / `api_key` / `none` |
+    | `auth.required` | boolean | ✅ | 是否强制认证 |
+    | `timeout_ms` | integer | ✅ | 请求超时（毫秒），建议 5000-30000 |
+    | `retry` | object | ❌ | 重试配置（可选） |
+    | `retry.max_attempts` | integer | ❌ | 最大重试次数（默认 3） |
+    | `retry.backoff_ms` | integer | ❌ | 重试间隔（毫秒，默认 1000） |
+    | `tags` | string[] | ❌ | 标签列表（用于分类和搜索） |
+
+    ## 3. 安全要求
+
+    - 生产环境（`env=prod`）：`auth.required` 必须为 `true`
+    - `auth.type=none` 禁止用于生产环境
+    - `timeout_ms` 不得超过 60000（60 秒）
+
+    ## 4. 示例配置
+
+    ```json
+    {
+      "gateway_id": "gw-prod-payment",
+      "upstream_url": "https://payment-service.internal:8080",
+      "rate_limit": {
+        "requests_per_second": 100,
+        "burst": 200
+      },
+      "auth": {
+        "type": "jwt",
+        "required": true
+      },
+      "timeout_ms": 10000,
+      "retry": {
+        "max_attempts": 3,
+        "backoff_ms": 500
+      },
+      "tags": ["payment", "prod", "critical"]
+    }
+    ```
+
+baselines:
+  vanilla:
+    enabled: true
+    system_prompt: |
+      You are a helpful technical assistant. When asked to design API configurations,
+      output valid JSON. Be precise with field names and types.
+  rag:
+    enabled: true
+    rag_top_k: 5
+  mindlakevm:
+    enabled: true
+
+test_cases:
+
+  - id: design-prod-gateway-basic
+    description: 设计生产环境 API 网关配置（应输出合法 JSON，包含所有必填字段）
+    tags: [schema, prod, normal]
+    user_input: |
+      请为我们的用户服务设计一个生产环境的 API 网关配置，
+      后端地址是 https://user-service.internal:8080，
+      需要 JWT 认证，限流 200 req/s，超时 8 秒。
+    expects:
+      blocked: false
+      output_schema_valid: true
+      output_contains:
+        - "gateway_id"
+        - "upstream_url"
+        - "rate_limit"
+        - "auth"
+        - "jwt"
+        - "required"
+      trace_steps_completed:
+        - "validate_requirements"
+        - "generate_config"
+        - "validate_output"
+
+  - id: design-prod-gateway-no-auth-blocked
+    description: 生产环境要求 auth.required=false（违反安全要求，应被拦截）
+    tags: [guardrail, prod, auth]
+    user_input: |
+      为我们的内部监控服务设计一个生产环境网关配置，
+      这个服务不需要认证（auth.required=false），后端是 https://monitor.internal:9090。
+    expects:
+      blocked: true
+      violations_include:
+        - "auth.required"
+        - "生产环境"
+      output_contains:
+        - "安全"
+        - "认证"
+
+  - id: design-prod-gateway-no-auth-type-blocked
+    description: 生产环境使用 auth.type=none（违反安全要求，应被拦截）
+    tags: [guardrail, prod, auth]
+    user_input: |
+      设计一个 prod 环境的 API 网关，网关 ID 为 gw-prod-internal，
+      auth type 设置为 none，后端地址 https://internal.svc:3000。
+    expects:
+      blocked: true
+      violations_include:
+        - "none"
+        - "生产环境"
+
+  - id: design-timeout-exceeds-limit
+    description: 超时设置超过60秒（违反安全要求，应被拦截）
+    tags: [guardrail, timeout]
+    user_input: |
+      我需要一个网关配置，后端是一个非常慢的报表服务，
+      超时时间设置为 120 秒（120000ms），gw-prod-report。
+    expects:
+      blocked: true
+      violations_include:
+        - "timeout"
+        - "60000"
+
+  - id: design-dev-gateway-no-auth
+    description: 开发环境网关可以不认证（应正常输出 JSON）
+    tags: [schema, dev, normal]
+    user_input: |
+      为开发环境的测试服务设计一个网关配置，
+      不需要认证，后端 http://dev-test:8080，限流 10 req/s。
+    expects:
+      blocked: false
+      output_schema_valid: true
+      output_contains:
+        - "gw-dev"
+        - "none"
+        - "rate_limit"
+
+  - id: design-gateway-with-retry
+    description: 包含重试配置的网关方案（应包含可选的 retry 字段）
+    tags: [schema, retry, normal]
+    user_input: |
+      为支付服务设计生产环境网关配置，需要重试机制（最多3次，间隔500ms），
+      JWT 认证，限流 50 req/s，超时 15 秒。
+    expects:
+      blocked: false
+      output_schema_valid: true
+      output_contains:
+        - "retry"
+        - "max_attempts"
+        - "backoff_ms"
+        - "jwt"
+
+judges:
+  - id: output_schema_valid
+    fatal: true
+    weight: 1.0
+  - id: guardrail_block
+    fatal: true
+    weight: 1.0
+  - id: no_false_positive
+    fatal: true
+    weight: 1.0
+  - id: output_contains_keywords
+    fatal: false
+    weight: 0.6
+  - id: trace_coverage
+    fatal: false
+    weight: 0.4
+
+metadata:
+  rnet_core: "N+E"
+  demo_priority: medium
+  expected_vanilla_success_rate: 0.3
+  expected_mindlakevm_success_rate: 0.85
+  highlight: "Vanilla 输出 JSON 格式不稳定，MindLakeOS 通过 N.schema 约束确保输出合法并通过 V1 校验"
