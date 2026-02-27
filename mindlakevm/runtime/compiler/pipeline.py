@@ -17,6 +17,128 @@ from models import (
 )
 from compiler.llm import llm_json
 
+# ── tool_use 定义：generate_semantic_kernel_ir ────────────────────────────────
+
+COMPILE_IR_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "generate_semantic_kernel_ir",
+        "description": "将企业文档编译为 SemanticKernelIR（RNET 四核中间表示）。必须调用此工具输出编译结果。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "kernel_id": {
+                    "type": "string",
+                    "description": "kebab-case 唯一ID，如 ops-sev1-incident-response-v1"
+                },
+                "version": {"type": "string", "default": "0.3"},
+                "source_doc": {"type": "string", "description": "文档来源标识"},
+                "r": {
+                    "type": "object",
+                    "properties": {
+                        "domain": {"type": "string", "description": "命名空间，如 ops.incident"},
+                        "object_type": {
+                            "type": "string",
+                            "enum": ["sop", "policy", "rfc", "checklist", "faq", "postmortem", "spec", "other"]
+                        },
+                        "semantic_space": {"type": "string", "description": "一句话描述 Skill 面向哪类用户、处理哪类问题"}
+                    },
+                    "required": ["domain", "object_type", "semantic_space"]
+                },
+                "n": {
+                    "type": "object",
+                    "properties": {
+                        "structure": {
+                            "type": "string",
+                            "enum": ["step_by_step", "decision_tree", "checklist", "matrix", "faq", "mixed"]
+                        },
+                        "constraints": {
+                            "type": "array", "items": {"type": "string"},
+                            "description": "输出必须包含的字段/信息"
+                        },
+                        "references": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "path": {"type": "string"},
+                                    "scope": {"type": "string"},
+                                    "required": {"type": "boolean"}
+                                },
+                                "required": ["path", "scope", "required"]
+                            }
+                        }
+                    },
+                    "required": ["structure"]
+                },
+                "e": {
+                    "type": "object",
+                    "properties": {
+                        "format": {"type": "string", "enum": ["markdown", "json", "structured_text"]},
+                        "target_entropy": {"type": "string", "description": "这个 Skill 要消除哪类不确定性"},
+                        "hard_constraints": {
+                            "type": "array", "items": {"type": "string"},
+                            "description": "触发即拦截的红线"
+                        },
+                        "soft_constraints": {
+                            "type": "array", "items": {"type": "string"},
+                            "description": "建议遵守的规则"
+                        },
+                        "meta_ignorance": {
+                            "type": "array", "items": {"type": "string"},
+                            "description": "文档未涵盖的相关盲点"
+                        }
+                    },
+                    "required": ["format", "target_entropy"]
+                },
+                "t": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string", "description": "kebab-case 步骤 ID"},
+                                    "name": {"type": "string"},
+                                    "description": {"type": "string"},
+                                    "tool_required": {"type": "string", "description": "该步骤需要调用的外部工具名"},
+                                    "requires_evidence": {"type": "boolean"},
+                                    "decision_points": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "condition": {"type": "string"},
+                                                "if_true": {"type": "string"},
+                                                "if_false": {"type": "string"}
+                                            },
+                                            "required": ["condition", "if_true"]
+                                        }
+                                    }
+                                },
+                                "required": ["id", "name", "description"]
+                            }
+                        },
+                        "cot_steps": {
+                            "type": "array", "items": {"type": "string"},
+                            "description": "引导 LLM 推理的思维链步骤"
+                        }
+                    },
+                    "required": ["path"]
+                }
+            },
+            "required": ["kernel_id", "r", "n", "e", "t"]
+        }
+    }
+}
+
+
+def _use_tool_mode() -> bool:
+    """当使用 OpenRouter 或显式开启时，启用 tool_use 模式。"""
+    base_url = os.environ.get("OPENAI_BASE_URL", "")
+    return "openrouter" in base_url or os.environ.get("ENABLE_TOOL_USE", "") == "1"
+
 
 def compile_document(req: CompileRequest) -> tuple[SemanticKernelIR, SkillPackage]:
     content = req.document_content or ""
@@ -86,11 +208,20 @@ def _extract_ir(
         if enable_probe else ""
     )
 
+    use_tools = _use_tool_mode()
+
     system_prompt = f"""你是一个认知编译器（Doc2Skill Compiler）。
 你的任务是将企业文档编译为 SemanticKernelIR（R/N/E/T 四核中间表示）。
 
 编译策略：{strategy}。{_STRATEGY_INSTRUCTIONS[strategy]}
 {probe_instruction}
+
+文档类型已识别为：{doc_type}。请据此设置 r.object_type。"""
+
+    if use_tools:
+        system_prompt += "\n\n请调用 generate_semantic_kernel_ir 工具输出编译结果。"
+    else:
+        system_prompt += f"""
 
 必须严格返回合法的 JSON，不要包含任何 Markdown 代码块标记或额外文字。
 
@@ -130,6 +261,7 @@ JSON 结构如下（所有字段含义见注释）：
         "decision_points": [
           {{"condition": "触发条件", "if_true": "真时动作", "if_false": "假时动作"}}
         ],
+        "tool_required": "该步骤需要调用的外部工具名（可选）",
         "requires_evidence": true
       }}
     ],
@@ -142,8 +274,10 @@ JSON 结构如下（所有字段含义见注释）：
 文档内容：
 {doc_text[:6000]}"""
 
-    raw = llm_json(system_prompt, user_msg)
+    tools = [COMPILE_IR_TOOL] if use_tools else None
+    raw = llm_json(system_prompt, user_msg, tools=tools)
     raw["compiled_at"] = datetime.now(timezone.utc).isoformat()
+    raw.setdefault("compilation_strategy", strategy)
 
     # normalise NCore: rename "schema" key if present
     if "n" in raw and "schema" in raw["n"]:
