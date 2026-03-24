@@ -2,6 +2,7 @@
 三组 Baseline 实现 — 对应 specs/bench/baselines_v0.1.md
 """
 from __future__ import annotations
+import re
 from models import RunRequest, RunResponse, ValidationResult, TokenUsage, EvidenceItem
 from executor.runner import run_skill
 from compiler.llm import llm_text
@@ -48,7 +49,9 @@ _RAG_SYSTEM = (
 
 def run_rag(user_input: str, scenario: dict) -> RunResponse:
     doc_content = scenario.get("document", {}).get("content_inline", "")
-    chunks = _chunk_document(doc_content, top_k=3)
+    rag_cfg = scenario.get("baselines", {}).get("rag", {})
+    top_k = rag_cfg.get("rag_top_k", 3)
+    chunks = _retrieve_chunks(doc_content, user_input, top_k=top_k)
     context = "\n\n".join(f"[Context Document {i+1}]\n{c}" for i, c in enumerate(chunks))
 
     full_user_msg = f"{context}\n\n---\n\nUser Question: {user_input}"
@@ -124,7 +127,81 @@ def _heuristic_evidence(text: str, scenario: dict) -> list[EvidenceItem]:
     return evidence
 
 
-def _chunk_document(doc: str, top_k: int = 3) -> list[str]:
-    """按段落粗切分，取前 top_k 块"""
-    paragraphs = [p.strip() for p in doc.split("\n\n") if p.strip()]
-    return paragraphs[:top_k]
+def _retrieve_chunks(doc: str, user_input: str, top_k: int = 3) -> list[str]:
+    chunks = _chunk_document(doc)
+    if not chunks:
+        return []
+
+    query_terms = _tokenize(user_input)
+    scored: list[tuple[float, int, str]] = []
+    for idx, chunk in enumerate(chunks):
+        score = _score_chunk(chunk, query_terms, user_input)
+        scored.append((score, idx, chunk))
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    selected = scored[:max(top_k, 1)]
+    selected.sort(key=lambda item: item[1])
+    return [chunk for _, _, chunk in selected]
+
+
+def _chunk_document(doc: str) -> list[str]:
+    """按标题和段落分块，保留局部上下文。"""
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", doc) if p.strip()]
+    if not paragraphs:
+        return []
+
+    chunks: list[str] = []
+    current_heading = ""
+    buffer: list[str] = []
+
+    for paragraph in paragraphs:
+        is_heading = paragraph.startswith("#")
+        if is_heading:
+            if buffer:
+                chunks.append("\n\n".join(buffer))
+                buffer = []
+            current_heading = paragraph
+            continue
+
+        if current_heading and not buffer:
+            buffer.append(current_heading)
+        buffer.append(paragraph)
+        if len(buffer) >= 3:
+            chunks.append("\n\n".join(buffer))
+            buffer = [current_heading] if current_heading else []
+
+    if buffer:
+        chunks.append("\n\n".join(buffer))
+
+    return [chunk for chunk in chunks if chunk.strip()]
+
+
+def _score_chunk(chunk: str, query_terms: list[str], user_input: str) -> float:
+    chunk_lower = chunk.lower()
+    score = 0.0
+    for term in query_terms:
+        if term in chunk_lower:
+            score += 3 if len(term) > 4 else 1.5
+            if any(ch.isdigit() for ch in term):
+                score += 1
+
+    exact_phrases = [phrase.strip().lower() for phrase in re.split(r"[，,。:\n]", user_input) if len(phrase.strip()) >= 4]
+    score += sum(2 for phrase in exact_phrases if phrase in chunk_lower)
+
+    if chunk.startswith("#"):
+        score += 0.5
+    return score
+
+
+def _tokenize(text: str) -> list[str]:
+    tokens = re.findall(r"[\u4e00-\u9fff]{2,}|[a-z0-9_./:-]{2,}", text.lower())
+    seen: list[str] = []
+    for token in tokens:
+        expanded = [token]
+        if re.fullmatch(r"[\u4e00-\u9fff]{3,}", token):
+            expanded.extend(token[i:i + 2] for i in range(len(token) - 1))
+            expanded.extend(token[i:i + 3] for i in range(len(token) - 2))
+        for term in expanded:
+            if term not in seen:
+                seen.append(term)
+    return seen

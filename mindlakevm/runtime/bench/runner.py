@@ -2,6 +2,7 @@
 Bench 评测入口 — 对应 POST /bench
 """
 from __future__ import annotations
+import os
 from models import (
     BenchRequest, BenchResponse, BenchRow, BenchSummary,
     RunRequest, RunResponse, TokenUsage,
@@ -51,10 +52,19 @@ def _ensure_skill_compiled(scenario: dict, skill_id: str) -> None:
     from models import CompileRequest
 
     doc = scenario.get("document", {})
-    content = doc.get("content_inline", "") or doc.get("content_path", "")
+    content = doc.get("content_inline", "")
+    document_id = None
+    if not content:
+        content_path = doc.get("content_path", "")
+        if content_path:
+            scenario_path = scenario.get("__scenario_path__", "")
+            if scenario_path and not os.path.isabs(content_path):
+                content_path = os.path.realpath(os.path.join(os.path.dirname(scenario_path), content_path))
+            document_id = content_path
     req = CompileRequest(
         task_description=scenario.get("name", skill_id),
         document_content=content,
+        document_id=document_id,
         strategy="default",
     )
     ir, package = compile_document(req)

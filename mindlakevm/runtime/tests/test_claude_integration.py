@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from models import (
     SemanticKernelIR, RCore, NCore, ECore, TCore,
     PathStep, DecisionPoint, ReferenceEntry,
-    SkillPackage, RunRequest, EvidenceItem,
+    SkillPackage, RunRequest, EvidenceItem, CompileRequest,
     TraceStep, Violation, TokenUsage, ValidationResult,
 )
 
@@ -268,6 +268,213 @@ class TestLayer2Compiler:
             assert _use_tool_mode() is False
         with patch.dict(os.environ, {"OPENAI_BASE_URL": "", "ENABLE_TOOL_USE": "1"}):
             assert _use_tool_mode() is True
+
+    def test_materialize_compile_request_reads_document_id(self, tmp_path):
+        """document_id 指向本地文件时，应读取文件正文。"""
+        from compiler.pipeline import materialize_compile_request
+
+        doc = tmp_path / "policy.md"
+        doc.write_text("# Policy\n\ncontent from file\n", encoding="utf-8")
+        req = CompileRequest(
+            task_description="policy from file",
+            document_id=str(doc),
+        )
+
+        resolved = materialize_compile_request(req)
+        assert "content from file" in (resolved.document_content or "")
+
+    def test_compile_doc_uses_cache_before_recompiling(self, sample_ir, sample_package, tmp_path):
+        """相同输入再次编译时，应在调用 LLM 之前命中缓存。"""
+        from api.compile import compile_doc
+
+        req = CompileRequest(
+            task_description="重复编译测试",
+            document_content="# Same document",
+            strategy="default",
+        )
+
+        with patch.dict(os.environ, {"SKILLS_DIR": str(tmp_path)}), \
+             patch("api.compile.compile_document", return_value=(sample_ir, sample_package)) as mock_compile:
+            first = compile_doc(req)
+            second = compile_doc(req)
+
+        assert mock_compile.call_count == 1
+        assert first.cache_hit is False
+        assert second.cache_hit is True
+
+    def test_skill_listing_skips_compile_cache_index(self, sample_ir, sample_package, tmp_path):
+        """技能列表不应把编译缓存索引文件识别成 skill。"""
+        import store
+
+        with patch.dict(os.environ, {"SKILLS_DIR": str(tmp_path)}):
+            store.save(sample_package.skill_id, sample_ir, sample_package)
+            store.save_compile_cache("fingerprint", sample_package.skill_id)
+            skills = store.list_all()
+
+        assert len(skills) == 1
+        assert skills[0].skill_id == sample_package.skill_id
+
+    def test_bench_content_path_resolves_relative_file(self, sample_ir, sample_package, tmp_path):
+        """bench 场景 content_path 应相对场景文件解析成本地文件路径。"""
+        from bench.runner import _ensure_skill_compiled
+
+        scenarios_dir = tmp_path / "specs" / "bench" / "scenarios"
+        docs_dir = tmp_path / "specs" / "docs"
+        scenarios_dir.mkdir(parents=True)
+        docs_dir.mkdir(parents=True)
+        doc = docs_dir / "source.md"
+        doc.write_text("# RFC\n\nfrom path\n", encoding="utf-8")
+
+        scenario = {
+            "name": "Path scenario",
+            "skill_id": "path-skill",
+            "__scenario_path__": str(scenarios_dir / "path_case.yaml"),
+            "document": {
+                "content_path": "../../docs/source.md",
+            },
+        }
+
+        with patch("bench.runner.store.exists", return_value=False), \
+             patch("bench.runner.store.save") as mock_save, \
+             patch("compiler.pipeline.compile_document", return_value=(sample_ir, sample_package)) as mock_compile:
+            _ensure_skill_compiled(scenario, "path-skill")
+
+        compile_req = mock_compile.call_args.args[0]
+        assert compile_req.document_id == str(doc.resolve())
+        mock_save.assert_called_once()
+
+    def test_build_package_materializes_skill_bundle(self, sample_ir, tmp_path):
+        """编译产物应真实写出 SKILL.md 和 references 文件。"""
+        from compiler.pipeline import _build_package
+
+        doc_text = """
+# 事故升级策略
+
+受影响用户 > 1000 时，立即通知 CTO。
+
+## Runbook
+
+先评估影响，再执行缓解操作。
+"""
+
+        with patch.dict(os.environ, {"SKILLS_DIR": str(tmp_path)}):
+            package = _build_package(sample_ir, doc_text)
+
+        bundle_root = tmp_path / package.skill_id
+        assert (bundle_root / "SKILL.md").exists()
+        assert (bundle_root / "references" / "escalation-matrix.md").exists()
+        assert (bundle_root / "references" / "runbook.md").exists()
+        assert all(f.size_bytes and f.size_bytes > 0 for f in package.files_tree)
+        skill_md = (bundle_root / "SKILL.md").read_text(encoding="utf-8")
+        assert "核心流程" in skill_md
+        assert "references/escalation-matrix.md" in skill_md
+
+    def test_rag_retrieval_prefers_relevant_chunks(self):
+        """RAG 应优先选中与问题相关的段落，而不是机械取前几段。"""
+        from bench.baselines import run_rag
+
+        scenario = {
+            "document": {
+                "content_inline": """
+# 概述
+
+这是一些无关的背景介绍。
+
+# 报销政策
+
+审批矩阵：
+- < 500 直属上级
+- 500 ~ 2000 直属上级 + 财务确认
+- 2000 ~ 10000 直属上级 + 部门负责人 + 财务
+
+# 附录
+
+这里是其他无关说明。
+""",
+            },
+            "baselines": {
+                "rag": {
+                    "rag_top_k": 1,
+                }
+            }
+        }
+
+        captured = {}
+
+        def fake_llm_text(system_prompt, user_message):
+            captured["user_message"] = user_message
+            return "ok", 10, 5
+
+        with patch("bench.baselines.llm_text", side_effect=fake_llm_text):
+            run_rag("3500 元报销需要哪些审批？", scenario)
+
+        assert "审批矩阵" in captured["user_message"]
+        assert "部门负责人" in captured["user_message"]
+
+    def test_store_read_bundle_file_blocks_path_escape(self, tmp_path):
+        """读取技能包文件时应阻止路径穿越。"""
+        import store
+
+        with patch.dict(os.environ, {"SKILLS_DIR": str(tmp_path)}):
+            bundle = tmp_path / "skill-a"
+            bundle.mkdir()
+            (bundle / "SKILL.md").write_text("content", encoding="utf-8")
+
+            assert store.read_bundle_file("skill-a", "SKILL.md") == "content"
+            with pytest.raises(ValueError):
+                store.read_bundle_file("skill-a", "../secret.txt")
+
+    def test_run_skill_collects_evidence_from_bundle_files(self, sample_ir, tmp_path):
+        """运行时应从已生成的 references 文件中提取实际 evidence 片段。"""
+        import store
+        from executor.runner import run_skill
+
+        package = SkillPackage(
+            skill_id="ops-sev1-incident-response",
+            skill_name="Sev1 事故响应流程",
+            description="desc",
+            kernel_id=sample_ir.kernel_id,
+            compiled_at=sample_ir.compiled_at,
+        )
+
+        with patch.dict(os.environ, {"SKILLS_DIR": str(tmp_path)}), \
+             patch("executor.runner.check_guardrails", return_value=[]), \
+             patch("executor.runner.llm_text", return_value=("请参考升级策略，通知部门负责人和财务。", 20, 10)):
+            store.save(package.skill_id, sample_ir, package)
+            bundle = tmp_path / package.skill_id / "references"
+            bundle.mkdir(parents=True)
+            (bundle / "escalation-matrix.md").write_text(
+                "# 升级策略\n\n金额在 2000 ~ 10000 时，需要部门负责人和财务审批。",
+                encoding="utf-8",
+            )
+            (bundle / "runbook.md").write_text(
+                "# 操作手册\n\n常规处理流程。",
+                encoding="utf-8",
+            )
+
+            resp = run_skill(
+                sample_ir,
+                RunRequest(skill_id=package.skill_id, user_input="3500 元报销需要哪些审批？"),
+            )
+
+        assert resp.blocked is False
+        assert len(resp.evidence) >= 1
+        assert "部门负责人" in (resp.evidence[0].excerpt or "")
+
+    def test_get_skill_file_endpoint_returns_bundle_content(self, sample_ir, sample_package, tmp_path):
+        """技能文件接口应返回 bundle 文件内容。"""
+        import store
+        from api.skills import get_skill_file
+
+        with patch.dict(os.environ, {"SKILLS_DIR": str(tmp_path)}):
+            store.save(sample_package.skill_id, sample_ir, sample_package)
+            bundle = tmp_path / sample_package.skill_id
+            bundle.mkdir()
+            (bundle / "SKILL.md").write_text("# Skill", encoding="utf-8")
+
+            result = get_skill_file(sample_package.skill_id, "SKILL.md")
+
+        assert result["content"] == "# Skill"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

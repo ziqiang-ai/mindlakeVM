@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { FileText, Zap, ChevronDown, ChevronUp } from 'lucide-react'
-import { compileDoc, type CompileResponse } from '../api'
+import { compileDoc, getSkillFile, type CompileResponse } from '../api'
 import RNETPanel from '../components/RNETPanel'
 
 const EXAMPLE_SOP = `# 生产环境故障应急响应 SOP
@@ -34,6 +34,10 @@ export default function CompilePage() {
   const [result, setResult] = useState<CompileResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showArtifacts, setShowArtifacts] = useState(false)
+  const [selectedArtifact, setSelectedArtifact] = useState<string | null>(null)
+  const [artifactContent, setArtifactContent] = useState<string>('')
+  const [artifactError, setArtifactError] = useState<string | null>(null)
+  const [artifactLoading, setArtifactLoading] = useState(false)
 
   const handleCompile = async () => {
     setLoading(true)
@@ -42,12 +46,28 @@ export default function CompilePage() {
     try {
       const res = await compileDoc({ task_description: taskDesc, document_content: docContent, strategy, enable_probe: enableProbe })
       setResult(res)
+      setSelectedArtifact(res.artifacts.files_tree[0]?.path ?? null)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (!result || !selectedArtifact) {
+      setArtifactContent('')
+      setArtifactError(null)
+      return
+    }
+
+    setArtifactLoading(true)
+    setArtifactError(null)
+    getSkillFile(result.artifacts.skill_id, selectedArtifact)
+      .then(file => setArtifactContent(file.content))
+      .catch((e: unknown) => setArtifactError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setArtifactLoading(false))
+  }, [result, selectedArtifact])
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -146,18 +166,40 @@ export default function CompilePage() {
               {showArtifacts ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </button>
             {showArtifacts && (
-              <div className="px-5 pb-4 space-y-1.5 border-t border-gray-100">
-                {result.artifacts.files_tree.map((f, i) => (
-                  <div key={i} className="flex items-center gap-3 text-sm">
-                    <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${
-                      f.type === 'skill_main' ? 'bg-blue-100 text-blue-700' :
-                      f.type === 'reference' ? 'bg-green-100 text-green-700' :
-                      'bg-gray-100 text-gray-600'
-                    }`}>{f.type}</span>
-                    <span className="font-mono text-gray-700">{f.path}</span>
-                    {f.token_estimate && <span className="text-gray-400 text-xs">~{f.token_estimate} tokens</span>}
+              <div className="grid gap-4 border-t border-gray-100 px-5 pb-4 pt-4 md:grid-cols-[280px_1fr]">
+                <div className="space-y-1.5">
+                  {result.artifacts.files_tree.map((f, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setSelectedArtifact(f.path)}
+                      className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                        selectedArtifact === f.path ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${
+                          f.type === 'skill_main' ? 'bg-blue-100 text-blue-700' :
+                          f.type === 'reference' ? 'bg-green-100 text-green-700' :
+                          'bg-gray-100 text-gray-600'
+                        }`}>{f.type}</span>
+                        <span className="font-mono text-gray-700">{f.path}</span>
+                      </div>
+                      {f.token_estimate && <div className="mt-1 text-xs text-gray-400">~{f.token_estimate} tokens</div>}
+                    </button>
+                  ))}
+                </div>
+                <div className="rounded-xl border border-gray-200 bg-gray-50">
+                  <div className="border-b border-gray-200 px-4 py-2 text-sm font-medium text-gray-700">
+                    {selectedArtifact ?? '选择文件查看内容'}
                   </div>
-                ))}
+                  {artifactError ? (
+                    <div className="p-4 text-sm text-red-700">{artifactError}</div>
+                  ) : artifactLoading ? (
+                    <div className="p-4 text-sm text-gray-500">加载中...</div>
+                  ) : (
+                    <pre className="max-h-96 overflow-auto whitespace-pre-wrap p-4 text-xs leading-relaxed text-gray-800">{artifactContent || '暂无内容'}</pre>
+                  )}
+                </div>
               </div>
             )}
           </div>

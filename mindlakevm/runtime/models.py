@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ── IR 四核 ──────────────────────────────────────────────────────────────────
@@ -21,19 +21,17 @@ class RCore(BaseModel):
 class NCore(BaseModel):
     structure: Literal["step_by_step", "decision_tree", "checklist", "matrix", "faq", "mixed"]
     schema_: Optional[dict] = Field(None, alias="schema")
-    constraints: list[str] = []
-    references: list[ReferenceEntry] = []
-
-    class Config:
-        populate_by_name = True
+    constraints: list[str] = Field(default_factory=list)
+    references: list[ReferenceEntry] = Field(default_factory=list)
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ECore(BaseModel):
     format: Literal["markdown", "json", "structured_text"]
     target_entropy: str
-    hard_constraints: list[str] = []
-    soft_constraints: list[str] = []
-    meta_ignorance: list[str] = []
+    hard_constraints: list[str] = Field(default_factory=list)
+    soft_constraints: list[str] = Field(default_factory=list)
+    meta_ignorance: list[str] = Field(default_factory=list)
 
 
 class DecisionPoint(BaseModel):
@@ -46,14 +44,14 @@ class PathStep(BaseModel):
     id: str
     name: str
     description: str
-    decision_points: list[DecisionPoint] = []
+    decision_points: list[DecisionPoint] = Field(default_factory=list)
     tool_required: Optional[str] = None
     requires_evidence: bool = False
 
 
 class TCore(BaseModel):
     path: list[PathStep]
-    cot_steps: list[str] = []
+    cot_steps: list[str] = Field(default_factory=list)
 
 
 class SemanticKernelIR(BaseModel):
@@ -81,7 +79,7 @@ class SkillPackage(BaseModel):
     skill_id: str
     skill_name: str
     description: Optional[str] = None
-    files_tree: list[SkillFile] = []
+    files_tree: list[SkillFile] = Field(default_factory=list)
     kernel_id: Optional[str] = None
     compiled_at: Optional[str] = None
 
@@ -162,16 +160,18 @@ class TokenUsage(BaseModel):
 class RunResponse(BaseModel):
     output_text: str
     blocked: bool
-    violations: list[Violation] = []
-    trace: list[TraceStep] = []
-    evidence: list[EvidenceItem] = []
+    violations: list[Violation] = Field(default_factory=list)
+    trace: list[TraceStep] = Field(default_factory=list)
+    evidence: list[EvidenceItem] = Field(default_factory=list)
     validation: ValidationResult
     usage: Optional[TokenUsage] = None
 
 
 class BenchRequest(BaseModel):
     scenario_id: str
-    baselines: list[Literal["vanilla", "rag", "mindlakevm"]] = ["vanilla", "rag", "mindlakevm"]
+    baselines: list[Literal["vanilla", "rag", "mindlakevm"]] = Field(
+        default_factory=lambda: ["vanilla", "rag", "mindlakevm"]
+    )
 
 
 class BenchRow(BaseModel):

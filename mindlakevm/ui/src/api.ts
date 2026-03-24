@@ -42,6 +42,7 @@ export interface BenchSummary { token_savings_pct: number; success_rate_delta: n
 export interface BenchResponse { scenario_id: string; results_table: BenchRow[]; report_summary: BenchSummary }
 
 export interface SkillSummary { skill_id: string; skill_name: string; domain: string; object_type: string; compiled_at: string }
+export interface SkillFileContent { skill_id: string; path: string; content: string }
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 
@@ -49,6 +50,9 @@ export const compileDoc = (body: { task_description: string; document_content: s
   post<CompileResponse>('/compile', body)
 
 export const listSkills = () => get<{ skills: SkillSummary[] }>('/skills')
+
+export const getSkillFile = (skill_id: string, path: string) =>
+  get<SkillFileContent>(`/skills/${skill_id}/file?path=${encodeURIComponent(path)}`)
 
 export const runSkill = (skill_id: string, user_input: string) =>
   post<RunResponse>('/run', { skill_id, user_input })

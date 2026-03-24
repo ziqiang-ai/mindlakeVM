@@ -46,10 +46,6 @@ def verify(
     else:
         stop_condition_met = False
 
-    # 软约束 warning（不影响 passed）
-    for sc in ir.e.soft_constraints:
-        warnings.append(f"soft_constraint: {sc}")
-
     passed = (
         (schema_valid is not False)
         and (evidence_sufficient is not False)

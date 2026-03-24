@@ -29,7 +29,9 @@ def load_scenario(scenario_id: str) -> dict:
         path = path2
 
     with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        data = yaml.safe_load(f)
+    data["__scenario_path__"] = path
+    return data
 
 
 def list_scenario_ids() -> list[str]:

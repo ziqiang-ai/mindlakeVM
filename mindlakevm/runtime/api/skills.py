@@ -37,6 +37,23 @@ def get_skill(skill_id: str):
     )
 
 
+@router.get("/skills/{skill_id}/file")
+def get_skill_file(
+    skill_id: str,
+    path: str = Query(..., description="Skill 包内相对路径，例如 SKILL.md 或 references/xxx.md"),
+):
+    result = store.get(skill_id)
+    if not result:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' 不存在")
+    try:
+        content = store.read_bundle_file(skill_id, path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Skill 文件不存在: {path}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"skill_id": skill_id, "path": path, "content": content}
+
+
 # ── Layer 4: Tool Definition 导出端点 ────────────────────────────────────────
 
 @router.get("/skills/{skill_id}/tool")

@@ -37,6 +37,27 @@ export default function RunPage() {
     return <Clock size={14} className="text-gray-300" />
   }
 
+  const validationItems = result ? [
+    {
+      key: 'schema_valid',
+      label: 'V1 Schema',
+      value: result.validation.schema_valid,
+      passedWhen: true,
+    },
+    {
+      key: 'evidence_sufficient',
+      label: 'V2 Evidence',
+      value: result.validation.evidence_sufficient,
+      passedWhen: true,
+    },
+    {
+      key: 'stop_condition_met',
+      label: 'V3 Step Limit',
+      value: result.validation.stop_condition_met,
+      passedWhen: false,
+    },
+  ] : []
+
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       <div>
@@ -176,22 +197,18 @@ export default function RunPage() {
               <div className="rounded-xl border border-gray-200 bg-white p-4">
                 <h3 className="text-sm font-semibold text-gray-700 mb-2">验证结果</h3>
                 <div className="space-y-1 text-xs">
-                  {[
-                    ['schema_valid', 'V1 Schema'],
-                    ['evidence_sufficient', 'V2 Evidence'],
-                    ['stop_condition_met', 'V3 Stop'],
-                  ].map(([key, label]) => {
-                    const val = result.validation[key as keyof typeof result.validation]
+                  {validationItems.map(item => {
+                    const passed = item.value === item.passedWhen
                     return (
-                      <div key={key} className="flex items-center gap-2">
-                        <span className={val === true ? 'text-red-500' : val === false ? 'text-green-500' : 'text-gray-400'}>
-                          {val === null || val === undefined ? '—' : val ? '✗' : '✓'}
+                      <div key={item.key} className="flex items-center gap-2">
+                        <span className={item.value === null || item.value === undefined ? 'text-gray-400' : passed ? 'text-green-500' : 'text-red-500'}>
+                          {item.value === null || item.value === undefined ? '—' : passed ? '✓' : '✗'}
                         </span>
-                        <span className="text-gray-600">{label}</span>
+                        <span className="text-gray-600">{item.label}</span>
                       </div>
                     )
                   })}
-                  {result.validation.warnings.filter(w => !w.startsWith('soft_constraint')).map((w, i) => (
+                  {result.validation.warnings.map((w, i) => (
                     <div key={i} className="text-orange-600 text-xs mt-1">⚠ {w}</div>
                   ))}
                 </div>
