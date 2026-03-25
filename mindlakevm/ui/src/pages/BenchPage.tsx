@@ -6,6 +6,7 @@ const SCENARIOS = [
   { id: 'sop-scale-guardrail', label: 'SOP 高峰期扩容门禁', desc: '核心路演场景：Vanilla 漏拦截 vs MindLakeOS 精准拦截' },
   { id: 'policy-reimbursement-json', label: '政策报销审批矩阵', desc: '结构化 JSON 输出 + 条件分支决策' },
   { id: 'rfc-schema-output', label: 'RFC API 网关设计', desc: 'RFC 文档 → 可校验的 JSON Schema 输出' },
+  { id: 'llmos-kernel-architecture', label: 'LLMOS Kernel 架构案例', desc: '项目设计对话沉淀为案例文档后的编译、问答与评测链路' },
 ]
 
 const BASELINE_LABELS: Record<string, string> = {
