@@ -1,0 +1,16 @@
+{
+  "tool_id": "cli_anything_fake_writer",
+  "name": "CLI-Anything Fake Writer",
+  "version": "0.1.0",
+  "provider": "cli-anything",
+  "command": "../../examples/fake_cli_anything/fake_cli_anything_writer.py",
+  "capabilities": [
+    "document.edit",
+    "document.export"
+  ],
+  "side_effect_level": "write_optional",
+  "requires_confirmation": true,
+  "supports_json": true,
+  "supports_repl": false,
+  "timeout_ms": 10000
+}

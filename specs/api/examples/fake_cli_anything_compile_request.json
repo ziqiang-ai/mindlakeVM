@@ -1,0 +1,7 @@
+{
+  "task_description": "Fake CLI-Anything 文档编辑案例",
+  "document_id": "../../docs/fake_cli_anything_case.md",
+  "strategy": "default",
+  "force_recompile": true,
+  "enable_probe": true
+}

@@ -1,0 +1,13 @@
+{
+  "binding_id": "bind_fake_cli_writer_first_step",
+  "skill_id": "replace-after-compile",
+  "step_id": "replace-after-inspecting-skill",
+  "tool_id": "cli_anything_fake_writer",
+  "arg_mapping": {
+    "action": "edit_text",
+    "input_path": "$input.document_path",
+    "output_path": "$runtime.temp_output_path",
+    "patch": "$user_input"
+  },
+  "enabled": true
+}

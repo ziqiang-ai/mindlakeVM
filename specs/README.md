@@ -11,7 +11,10 @@
 - **要实现编译器/运行时/前端**：先看 `specs/api/openapi_v0.1.yaml` + `specs/rnet/ir_schema_v0.3.json`
 - **要跑对比 Demo（vanilla vs RAG vs mindlakeVM）**：先看 `specs/bench/scenarios/` + `specs/bench/judge_spec_v0.1.md`
   * 项目案例链路示例：`docs/llmos_kernel_architecture_case.md` + `specs/api/examples/llmos_kernel_compile_request.json` + `specs/bench/scenarios/llmos_kernel_architecture.yaml`
+  * 外部工具接入演示：`docs/fake_cli_anything_case.md` + `specs/api/examples/fake_cli_anything_*.json` + `mindlakevm/runtime/tests/test_e2e_fake_cli_anything_flow.sh`
+  * 真实场景演示：`docs/code_review_case.md` + `specs/api/examples/code_review_*.json` + `mindlakevm/runtime/tests/test_e2e_code_review_flow.sh`
 - **要对外讲清楚“不是玄学”**：先看 `specs/rnet/mapping_ui_v0.1.md`（页面字段→R/N/E/T）
+- **要继续做 runtime / tool / process 治理**：先看 `specs/registration/registration_model_v0.1.md`
 - **要改字段/加能力**：先看 `specs/changelog/specs_changelog.md`（版本与破坏性变更规则）
 
 ---
@@ -21,6 +24,9 @@
 ```text
 specs/
   README.md                         # 本文件：规范索引入口
+  registration/                     # 注册体系规范（“对象进入系统秩序的规则”）
+    registration_model_v0.1.md      # Skill / Tool / Process / Event / Budget 的统一注册模型
+    registration_object_model_diagram_v0.1.md # models.py + registry.py 对应设计图
   rnet/                             # R/N/E/T 本体与字段定义（“语言标准”）
     rnet_core_v0.3.md               # 四核定义、字段语义、工程映射
     ir_schema_v0.3.json             # SemanticKernelIR JSON Schema（单一真源）
@@ -30,6 +36,16 @@ specs/
     openapi_v0.1.yaml               # /compile /skills /run /bench 合同
     examples/                       # API请求响应示例（前端/测试用）
       compile_request.json
+      fake_cli_anything_compile_request.json
+      fake_cli_anything_tool_handle.json
+      fake_cli_anything_tool_binding.json
+      fake_cli_anything_run_simulate_request.json
+      fake_cli_anything_run_live_request.json
+      code_review_compile_request.json
+      code_review_tool_handle.json
+      code_review_tool_binding.json
+      code_review_run_simulate_request.json
+      code_review_run_live_request.json
       llmos_kernel_compile_request.json
       llmos_kernel_run_questions.json
       compile_response.json

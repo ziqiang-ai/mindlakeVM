@@ -2,117 +2,136 @@
   "ir": {
     "kernel_id": "ops-sev1-incident-response-v1",
     "version": "0.3",
-    "compiled_at": "2026-02-27T09:38:01.683079+00:00",
-    "source_doc": "生产环境故障应急响应 SOP",
+    "compiled_at": "2026-03-25T07:00:50.080194+00:00",
+    "source_doc": null,
     "compilation_strategy": "default",
     "r": {
       "domain": "ops.incident",
       "object_type": "sop",
-      "semantic_space": "面向运维团队处理生产环境 SEV1 级别故障的应急响应流程",
+      "semantic_space": "面向 SRE 团队的生产环境严重故障（SEV1）应急响应处理流程",
       "version": null
     },
     "n": {
       "structure": "step_by_step",
       "schema": null,
       "constraints": [
-        "必须包含受影响用户数量",
-        "必须包含故障等级判定",
-        "必须包含响应时间记录",
-        "必须包含外部通告状态"
+        "故障级别",
+        "响应时限",
+        "升级流程",
+        "禁止事项"
       ],
       "references": [
         {
-          "path": "references/incident-levels.md",
-          "scope": "故障等级定义",
-          "required": true
-        },
-        {
-          "path": "references/escalation-contacts.md",
-          "scope": "升级联系人清单",
+          "path": "references/ESCALATION_MATRIX.md",
+          "scope": "联系人升级矩阵",
           "required": true
         }
       ]
     },
     "e": {
       "format": "structured_text",
-      "target_entropy": "消除故障处理过程中的不确定性和随意性，确保响应过程可控可追溯",
+      "target_entropy": "故障响应决策不确定性",
       "hard_constraints": [
-        "高峰期（08:00-22:00）禁止任何扩缩容操作，除非持有CTO书面授权",
-        "故障期间生产数据库仅允许只读操作，写操作需DBA审批",
-        "受影响用户超过1000人时，必须在15分钟内发送外部通告"
+        "高峰期（08:00-22:00）禁止执行任何扩缩容操作，除非持有 CTO 书面授权",
+        "故障期间生产数据库仅允许只读操作，需要 DBA 审批写操作",
+        "SEV1事件（影响用户>1000）必须在15分钟内发送外部通告"
       ],
       "soft_constraints": [
-        "建议在操作前进行影响评估",
-        "建议保留所有操作日志"
+        "优先考虑回滚操作作为缓解措施",
+        "SEV1事件需要在5分钟内响应"
       ],
-      "meta_ignorance": []
+      "meta_ignorance": [
+        "具体的回滚操作步骤和方法",
+        "War Room的具体组织和运作方式",
+        "外部通告的具体内容模板",
+        "事后复盘流程",
+        "具体的扩容规定细节"
+      ]
     },
     "t": {
       "path": [
         {
-          "id": "incident-detection",
-          "name": "故障发现",
-          "description": "确认故障现象并进行初步影响评估",
+          "id": "assess-impact",
+          "name": "评估影响范围",
+          "description": "确认受影响服务和用户数量，判定故障级别",
           "decision_points": [
             {
               "condition": "受影响用户数 > 1000",
-              "if_true": "立即启动外部通告流程",
-              "if_false": "继续监控用户影响范围"
+              "if_true": "判定为 SEV1",
+              "if_false": "继续评估是否 SEV2/SEV3"
             }
           ],
           "tool_required": null,
+          "tool_args_schema": null,
+          "side_effect_level": null,
+          "requires_confirmation": false,
+          "tool_binding_id": null,
+          "requires_evidence": false
+        },
+        {
+          "id": "escalate-notification",
+          "name": "升级通知",
+          "description": "根据影响范围进行升级通知",
+          "decision_points": [
+            {
+              "condition": "是否 SEV1（影响用户>1000）",
+              "if_true": "通知CTO并召集War Room",
+              "if_false": "按SEV2/3流程处理"
+            }
+          ],
+          "tool_required": null,
+          "tool_args_schema": null,
+          "side_effect_level": null,
+          "requires_confirmation": false,
+          "tool_binding_id": null,
           "requires_evidence": true
         },
         {
-          "id": "initial-response",
-          "name": "初始响应",
-          "description": "确定故障等级并通知相关团队",
+          "id": "mitigation",
+          "name": "执行缓解措施",
+          "description": "优先考虑回滚操作，必要时考虑扩容",
           "decision_points": [
             {
-              "condition": "是否需要数据库写操作",
-              "if_true": "申请DBA审批",
-              "if_false": "继续故障排查"
+              "condition": "是否在高峰期（08:00-22:00）",
+              "if_true": "禁止扩缩容除非有CTO授权",
+              "if_false": "可考虑扩容选项"
             }
           ],
           "tool_required": null,
-          "requires_evidence": true
+          "tool_args_schema": null,
+          "side_effect_level": null,
+          "requires_confirmation": false,
+          "tool_binding_id": null,
+          "requires_evidence": false
         }
       ],
       "cot_steps": [
-        "评估故障影响范围和严重程度",
-        "确定是否触发红线条件",
-        "决定是否需要升级",
-        "制定具体修复方案",
-        "评估方案风险并执行",
-        "验证修复效果"
+        "1. 快速评估影响范围确定故障级别",
+        "2. 根据级别进行必要的升级通知",
+        "3. 评估并执行缓解措施，注意遵守禁止事项",
+        "4. 对于SEV1需要及时发送外部通告"
       ]
     }
   },
   "package": {
     "skill_id": "ops-sev1-incident-response",
-    "skill_name": "面向运维团队处理生产环境 SEV1 级别故障的应急响应流程",
-    "description": "面向运维团队处理生产环境 SEV1 级别故障的应急响应流程",
+    "skill_name": "面向 SRE 团队的生产环境严重故障（SEV1）应急响应处理流程",
+    "description": "面向 SRE 团队的生产环境严重故障（SEV1）应急响应处理流程",
     "files_tree": [
       {
         "path": "SKILL.md",
         "type": "skill_main",
-        "size_bytes": null,
-        "token_estimate": 200
+        "size_bytes": 1803,
+        "token_estimate": 258
       },
       {
-        "path": "references/incident-levels.md",
+        "path": "references/ESCALATION_MATRIX.md",
         "type": "reference",
-        "size_bytes": null,
-        "token_estimate": 75
-      },
-      {
-        "path": "references/escalation-contacts.md",
-        "type": "reference",
-        "size_bytes": null,
-        "token_estimate": 75
+        "size_bytes": 304,
+        "token_estimate": 48
       }
     ],
     "kernel_id": "ops-sev1-incident-response-v1",
-    "compiled_at": "2026-02-27T09:38:01.683079+00:00"
+    "compiled_at": "2026-03-25T07:00:50.080194+00:00"
   }
 }

@@ -24,6 +24,7 @@ from models import (
     PathStep, DecisionPoint, ReferenceEntry,
     SkillPackage, RunRequest, EvidenceItem, CompileRequest,
     TraceStep, Violation, TokenUsage, ValidationResult,
+    ToolHandle, ToolBinding, ToolExecutionResult, ToolExecutionUsage, ToolArtifact, ToolInvocation,
 )
 
 
@@ -410,6 +411,312 @@ class TestLayer2Compiler:
 
         assert "审批矩阵" in captured["user_message"]
         assert "部门负责人" in captured["user_message"]
+
+    def test_tool_registry_sync_imports_cli_anything_entries(self, tmp_path):
+        """CLI-Anything registry 应能导入为 ToolHandle。"""
+        import tool_registry
+
+        registry = {
+            "clis": [
+                {
+                    "name": "cli-anything-libreoffice",
+                    "entry_point": "cli-anything-libreoffice",
+                    "install_cmd": "pip install cli-anything-libreoffice",
+                    "category": "document",
+                }
+            ]
+        }
+        registry_path = tmp_path / "registry.json"
+        registry_path.write_text(json.dumps(registry), encoding="utf-8")
+
+        with patch.dict(os.environ, {"TOOL_REGISTRY_DIR": str(tmp_path / "tool-registry")}):
+            resp = tool_registry.sync_cli_anything_registry(str(registry_path))
+            tool = tool_registry.get_tool("cli_anything_libreoffice")
+
+        assert resp.imported == 1
+        assert tool is not None
+        assert tool.command == "cli-anything-libreoffice"
+        assert tool.registry_metadata["install_command"] == "pip install cli-anything-libreoffice"
+
+    def test_tool_registry_probe_detects_missing_command(self, tmp_path):
+        """probe 工具应能报告命令缺失。"""
+        import tool_registry
+
+        tool = ToolHandle(
+            tool_id="missing_tool",
+            name="Missing Tool",
+            command="definitely-not-installed-command",
+        )
+        with patch.dict(os.environ, {"TOOL_REGISTRY_DIR": str(tmp_path / "tool-registry")}):
+            tool_registry.save_tool(tool)
+            result = tool_registry.probe_tool("missing_tool")
+
+        assert result.ok is False
+        assert "command not found" in (result.message or "")
+
+    def test_run_skill_executes_bound_tool_and_collects_tool_evidence(self, sample_ir):
+        """simulate/live 模式下，应执行绑定工具并把结构化输出纳入结果。"""
+        from executor.runner import run_skill
+
+        binding = ToolBinding(
+            binding_id="bind_triage",
+            skill_id="ops-sev1-incident-response",
+            step_id="triage",
+            tool_id="cli_anything_pagerduty",
+            arg_mapping={"query": "$user_input"},
+        )
+        handle = ToolHandle(
+            tool_id="cli_anything_pagerduty",
+            name="PagerDuty CLI",
+            command="cli-anything-pagerduty",
+            side_effect_level="read_only",
+        )
+        tool_result = ToolExecutionResult(
+            invocation_id="invoke_001",
+            tool_id=handle.tool_id,
+            status="success",
+            exit_code=0,
+            stdout_json={"summary": "PagerDuty alerted", "ticket_id": "PD-001"},
+            artifacts=[ToolArtifact(path="/tmp/alert.json", type="artifact")],
+            usage=ToolExecutionUsage(wall_time_ms=120),
+        )
+
+        with patch("executor.runner.check_guardrails", return_value=[]), \
+             patch("executor.runner.llm_text", return_value=("已完成升级。", 20, 10)), \
+             patch("executor.runner.tool_registry.list_bindings", return_value=[binding]), \
+             patch("executor.runner.tool_registry.list_tools", return_value=[handle]), \
+             patch("executor.runner.invoke_cli_tool", return_value=tool_result):
+            resp = run_skill(
+                sample_ir,
+                RunRequest(
+                    skill_id="ops-sev1-incident-response",
+                    user_input="请升级故障处理并通知相关团队",
+                    execution_mode="simulate",
+                ),
+            )
+
+        assert resp.blocked is False
+        assert len(resp.tool_results) == 1
+        assert resp.tool_results[0].tool_id == handle.tool_id
+        assert any(e.source_type == "tool_result" for e in resp.evidence)
+        triage_trace = next(t for t in resp.trace if t.step_id == "triage")
+        assert triage_trace.tool_id == handle.tool_id
+        assert triage_trace.tool_invocation_id == "invoke_001"
+
+    def test_run_skill_blocks_unconfirmed_live_side_effect_tool(self, sample_ir):
+        """live 模式下，未确认的写操作工具应被 policy block。"""
+        from executor.runner import run_skill
+
+        binding = ToolBinding(
+            binding_id="bind_triage",
+            skill_id="ops-sev1-incident-response",
+            step_id="triage",
+            tool_id="cli_anything_ticketing",
+            arg_mapping={"query": "$user_input"},
+        )
+        handle = ToolHandle(
+            tool_id="cli_anything_ticketing",
+            name="Ticketing CLI",
+            command="cli-anything-ticketing",
+            side_effect_level="write_optional",
+            requires_confirmation=True,
+        )
+
+        with patch("executor.runner.check_guardrails", return_value=[]), \
+             patch("executor.runner.tool_registry.list_bindings", return_value=[binding]), \
+             patch("executor.runner.tool_registry.list_tools", return_value=[handle]), \
+             patch("executor.runner.llm_text") as mock_llm:
+            resp = run_skill(
+                sample_ir,
+                RunRequest(
+                    skill_id="ops-sev1-incident-response",
+                    user_input="直接创建故障单并通知团队",
+                    execution_mode="live",
+                    allow_side_effects=True,
+                    confirm=False,
+                ),
+            )
+
+        assert resp.blocked is True
+        assert resp.policy_decisions[0].allowed is False
+        assert "需要确认" in (resp.policy_decisions[0].reason or "")
+        mock_llm.assert_not_called()
+
+    def test_invoke_fake_cli_anything_tool_simulate_and_live(self, tmp_path):
+        """fake CLI-Anything 工具应支持 dry-run 和真实写入。"""
+        from executor.tool_adapter import invoke_cli_tool
+
+        script_path = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "..",
+                "..",
+                "examples",
+                "fake_cli_anything",
+                "fake_cli_anything_writer.py",
+            )
+        )
+        input_path = tmp_path / "input.txt"
+        dry_output_path = tmp_path / "dry-output.txt"
+        live_output_path = tmp_path / "live-output.txt"
+        input_path.write_text("# Draft\n\nOriginal body.", encoding="utf-8")
+
+        handle = ToolHandle(
+            tool_id="cli_anything_fake_writer",
+            name="Fake Writer",
+            command=script_path,
+            side_effect_level="write_optional",
+            requires_confirmation=True,
+            supports_json=True,
+            timeout_ms=5000,
+        )
+
+        dry_result = invoke_cli_tool(
+            handle,
+            ToolInvocation(
+                invocation_id="invoke_dry",
+                tool_id=handle.tool_id,
+                process_id="proc_demo",
+                step_id="edit-document",
+                args={
+                    "action": "edit_text",
+                    "input_path": str(input_path),
+                    "output_path": str(dry_output_path),
+                    "patch": "Append dry run text.",
+                },
+                dry_run=True,
+                timeout_ms=5000,
+            ),
+        )
+        live_result = invoke_cli_tool(
+            handle,
+            ToolInvocation(
+                invocation_id="invoke_live",
+                tool_id=handle.tool_id,
+                process_id="proc_demo",
+                step_id="edit-document",
+                args={
+                    "action": "edit_text",
+                    "input_path": str(input_path),
+                    "output_path": str(live_output_path),
+                    "patch": "Append live text.",
+                },
+                dry_run=False,
+                timeout_ms=5000,
+            ),
+        )
+
+        assert dry_result.status == "success"
+        assert dry_result.stdout_json["dry_run"] is True
+        assert dry_output_path.exists() is False
+
+        assert live_result.status == "success"
+        assert live_result.stdout_json["dry_run"] is False
+        assert live_output_path.exists() is True
+        assert "Append live text." in live_output_path.read_text(encoding="utf-8")
+
+    def test_invoke_fake_pr_review_tool_simulate_and_live(self, tmp_path):
+        """fake PR review 工具应支持生成草稿与 live 发布结果。"""
+        from executor.tool_adapter import invoke_cli_tool
+
+        script_path = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "..",
+                "..",
+                "examples",
+                "fake_cli_anything",
+                "fake_cli_anything_pr_review.py",
+            )
+        )
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        simulate_output = tmp_path / "review-simulate.json"
+        live_output = tmp_path / "review-live.json"
+
+        handle = ToolHandle(
+            tool_id="cli_anything_pr_review",
+            name="Fake PR Review",
+            command=script_path,
+            side_effect_level="write_optional",
+            requires_confirmation=True,
+            supports_json=True,
+            timeout_ms=5000,
+        )
+
+        simulate_result = invoke_cli_tool(
+            handle,
+            ToolInvocation(
+                invocation_id="invoke_review_sim",
+                tool_id=handle.tool_id,
+                process_id="proc_review",
+                step_id="review-pr",
+                args={
+                    "action": "review_pr",
+                    "repo_path": str(repo_path),
+                    "pr_number": 128,
+                    "focus": "数据库迁移风险、接口兼容性和测试缺口",
+                    "output_path": str(simulate_output),
+                },
+                dry_run=True,
+                timeout_ms=5000,
+            ),
+        )
+        live_result = invoke_cli_tool(
+            handle,
+            ToolInvocation(
+                invocation_id="invoke_review_live",
+                tool_id=handle.tool_id,
+                process_id="proc_review",
+                step_id="publish-review",
+                args={
+                    "action": "publish_review",
+                    "repo_path": str(repo_path),
+                    "pr_number": 128,
+                    "focus": "发布 review draft",
+                    "output_path": str(live_output),
+                },
+                dry_run=False,
+                timeout_ms=5000,
+            ),
+        )
+
+        assert simulate_result.status == "success"
+        assert simulate_result.stdout_json["dry_run"] is True
+        assert len(simulate_result.stdout_json["findings"]) >= 1
+        assert simulate_output.exists() is False
+
+        assert live_result.status == "success"
+        assert live_result.stdout_json["dry_run"] is False
+        assert live_output.exists() is True
+        assert "publish_review" in live_output.read_text(encoding="utf-8")
+
+    def test_run_skill_answer_only_skips_all_tools(self, sample_ir):
+        """answer_only 模式下不应执行任何工具。"""
+        from executor.runner import run_skill
+
+        with patch("executor.runner.check_guardrails", return_value=[]), \
+             patch("executor.runner.llm_text", return_value=("回答内容。", 10, 5)), \
+             patch("executor.runner.tool_registry.list_bindings") as mock_bindings, \
+             patch("executor.runner.tool_registry.list_tools") as mock_tools, \
+             patch("executor.runner.invoke_cli_tool") as mock_invoke:
+            resp = run_skill(
+                sample_ir,
+                RunRequest(
+                    skill_id="ops-sev1-incident-response",
+                    user_input="请描述事故响应流程",
+                    execution_mode="answer_only",
+                ),
+            )
+
+        mock_bindings.assert_not_called()
+        mock_tools.assert_not_called()
+        mock_invoke.assert_not_called()
+        assert resp.blocked is False
+        assert resp.tool_results == []
+        assert resp.policy_decisions == []
 
     def test_store_read_bundle_file_blocks_path_escape(self, tmp_path):
         """读取技能包文件时应阻止路径穿越。"""

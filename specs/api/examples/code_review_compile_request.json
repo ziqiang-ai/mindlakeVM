@@ -1,0 +1,7 @@
+{
+  "task_description": "PR 代码审查案例",
+  "document_id": "../../docs/code_review_case.md",
+  "strategy": "detailed",
+  "force_recompile": true,
+  "enable_probe": true
+}

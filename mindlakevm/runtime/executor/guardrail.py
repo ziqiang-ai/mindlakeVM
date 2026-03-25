@@ -103,11 +103,14 @@ def check_guardrails(e: ECore, user_input: str) -> list[Violation]:
 
     violations: list[Violation] = []
     for v in result.get("violations", []):
+        if not isinstance(v, dict):
+            continue
         idx = v.get("constraint_index", 0)
-        if 0 <= idx < len(e.hard_constraints):
-            violations.append(Violation(
-                constraint=e.hard_constraints[idx],
-                reason=v.get("reason", ""),
-                severity="hard",
-            ))
+        if not isinstance(idx, int) or not (0 <= idx < len(e.hard_constraints)):
+            continue
+        violations.append(Violation(
+            constraint=e.hard_constraints[idx],
+            reason=v.get("reason", ""),
+            severity="hard",
+        ))
     return violations

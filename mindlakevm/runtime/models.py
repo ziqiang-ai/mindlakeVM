@@ -46,6 +46,10 @@ class PathStep(BaseModel):
     description: str
     decision_points: list[DecisionPoint] = Field(default_factory=list)
     tool_required: Optional[str] = None
+    tool_args_schema: Optional[dict] = None
+    side_effect_level: Optional[Literal["read_only", "write_optional", "write_required"]] = None
+    requires_confirmation: bool = False
+    tool_binding_id: Optional[str] = None
     requires_evidence: bool = False
 
 
@@ -84,6 +88,103 @@ class SkillPackage(BaseModel):
     compiled_at: Optional[str] = None
 
 
+# ── Tool 接入 ────────────────────────────────────────────────────────────────
+
+class RetryPolicy(BaseModel):
+    max_retries: int = 0
+    retryable_errors: list[str] = Field(default_factory=list)
+
+
+class ToolHandle(BaseModel):
+    tool_id: str
+    name: str
+    version: str = "0.1.0"
+    provider: str = "cli-anything"
+    kind: Literal["cli"] = "cli"
+    command: str
+    args_schema: dict = Field(default_factory=lambda: {"type": "object", "properties": {}})
+    output_schema: dict = Field(default_factory=lambda: {"type": "object"})
+    capabilities: list[str] = Field(default_factory=list)
+    side_effect_level: Literal["read_only", "write_optional", "write_required"] = "read_only"
+    requires_confirmation: bool = False
+    supports_json: bool = True
+    supports_repl: bool = False
+    timeout_ms: int = 30000
+    retry_policy: RetryPolicy = Field(default_factory=RetryPolicy)
+    status: Literal["active", "inactive"] = "active"
+    skill_path: Optional[str] = None
+    registry_metadata: dict = Field(default_factory=dict)
+
+
+class ToolBinding(BaseModel):
+    binding_id: str
+    skill_id: str
+    step_id: str
+    tool_id: str
+    arg_mapping: dict[str, str] = Field(default_factory=dict)
+    result_mapping: dict[str, str] = Field(default_factory=dict)
+    confirmation_policy: Literal["inherit_tool", "always", "never"] = "inherit_tool"
+    enabled: bool = True
+
+
+class ToolArtifact(BaseModel):
+    path: str
+    type: str = "artifact"
+
+
+class ToolExecutionUsage(BaseModel):
+    wall_time_ms: int = 0
+
+
+class ToolExecutionResult(BaseModel):
+    invocation_id: str
+    tool_id: str
+    status: Literal["success", "error"] = "success"
+    exit_code: int = 0
+    stdout_json: dict = Field(default_factory=dict)
+    stderr_text: str = ""
+    artifacts: list[ToolArtifact] = Field(default_factory=list)
+    usage: ToolExecutionUsage = Field(default_factory=ToolExecutionUsage)
+
+
+class ToolPolicyDecision(BaseModel):
+    tool_id: str
+    allowed: bool
+    reason: Optional[str] = None
+    requires_confirmation: bool = False
+    risk_level: Literal["low", "medium", "high"] = "low"
+
+
+class ToolRegistrySyncRequest(BaseModel):
+    registry_path: str
+    overwrite: bool = False
+
+
+class ToolRegistrySyncResponse(BaseModel):
+    snapshot_id: str
+    imported: int
+    skipped: int
+
+
+class ToolProbeResult(BaseModel):
+    tool_id: str
+    ok: bool
+    version: Optional[str] = None
+    supports_json: bool = False
+    supports_repl: bool = False
+    message: Optional[str] = None
+
+
+class ToolInvocation(BaseModel):
+    invocation_id: str
+    tool_id: str
+    process_id: str
+    step_id: str
+    args: dict = Field(default_factory=dict)
+    dry_run: bool = False
+    timeout_ms: int = 30000
+
+
 # ── API 请求/响应 ─────────────────────────────────────────────────────────────
 
 class CompileRequest(BaseModel):
@@ -114,12 +215,16 @@ class SkillSummary(BaseModel):
 
 class SkillDetail(SkillSummary):
     ir: SemanticKernelIR
-    files_tree: list[SkillFile] = []
+    files_tree: list[SkillFile] = Field(default_factory=list)
 
 
 class RunRequest(BaseModel):
     skill_id: str
     user_input: str
+    execution_mode: Literal["answer_only", "simulate", "live"] = "answer_only"
+    allow_side_effects: bool = False
+    confirm: bool = False
+    input_context: dict = Field(default_factory=dict)
 
 
 class Violation(BaseModel):
@@ -135,10 +240,14 @@ class TraceStep(BaseModel):
     completed_at: Optional[str] = None
     decision_taken: Optional[str] = None
     notes: Optional[str] = None
+    tool_id: Optional[str] = None
+    tool_invocation_id: Optional[str] = None
+    artifacts: list[str] = Field(default_factory=list)
 
 
 class EvidenceItem(BaseModel):
     source_path: str
+    source_type: Literal["reference", "tool_result"] = "reference"
     excerpt: Optional[str] = None
     relevance: Optional[str] = None
 
@@ -148,7 +257,7 @@ class ValidationResult(BaseModel):
     schema_valid: Optional[bool] = None
     evidence_sufficient: Optional[bool] = None
     stop_condition_met: Optional[bool] = None
-    warnings: list[str] = []
+    warnings: list[str] = Field(default_factory=list)
 
 
 class TokenUsage(BaseModel):
@@ -165,6 +274,9 @@ class RunResponse(BaseModel):
     evidence: list[EvidenceItem] = Field(default_factory=list)
     validation: ValidationResult
     usage: Optional[TokenUsage] = None
+    tool_results: list[ToolExecutionResult] = Field(default_factory=list)
+    artifacts: list[ToolArtifact] = Field(default_factory=list)
+    policy_decisions: list[ToolPolicyDecision] = Field(default_factory=list)
 
 
 class BenchRequest(BaseModel):

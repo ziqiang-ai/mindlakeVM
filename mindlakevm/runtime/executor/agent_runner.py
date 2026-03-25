@@ -18,6 +18,7 @@ from typing import Callable
 from models import (
     SemanticKernelIR, RunRequest, RunResponse,
     EvidenceItem, TraceStep, TokenUsage, Violation,
+    ToolExecutionResult, ToolArtifact, ToolPolicyDecision,
 )
 from executor.guardrail import check_guardrails
 from executor.verifier import verify
@@ -356,16 +357,36 @@ def run_skill_agent(
             trace=trace, evidence=[], validation=validation, usage=TokenUsage(),
         )
 
-    # Step 2: 编译 IR → tools + system prompt
-    system_prompt = build_agent_system_prompt(ir)
-    tools = compile_ir_to_tools(ir, external_tools)
-
-    # Step 3: 初始化 trace（所有步骤标记为 pending）
+    # Step 2: 执行绑定的外部 CLI 工具（Tool Pipeline）
+    from executor.runner import _execute_bound_tools, _build_policy_block_message
+    from executor.tracer import make_trace as _make_trace
     trace: list[TraceStep] = [
         TraceStep(step_id=s.id, status="pending", started_at=_now())
         for s in ir.t.path
     ]
-    evidence: list[EvidenceItem] = []
+    tool_results, artifacts, policy_decisions, tool_evidence = _execute_bound_tools(ir, req, trace)
+    denied = next((d for d in policy_decisions if not d.allowed), None)
+    if denied:
+        block_msg = _build_policy_block_message(denied)
+        validation = verify(ir, block_msg, tool_evidence, len(trace))
+        return RunResponse(
+            output_text=block_msg, blocked=True, violations=[],
+            trace=trace, evidence=tool_evidence, validation=validation,
+            usage=TokenUsage(),
+            tool_results=tool_results, artifacts=artifacts, policy_decisions=policy_decisions,
+        )
+
+    # Step 3: 编译 IR → tools + system prompt
+    system_prompt = build_agent_system_prompt(ir)
+    if tool_results:
+        tool_context = "\n\n".join(
+            f"### {r.tool_id}\n状态: {r.status}\n结果: {r.stdout_json if r.stdout_json else {'exit_code': r.exit_code}}"
+            for r in tool_results
+        )
+        system_prompt += f"\n\n## 外部工具执行结果\n{tool_context}"
+    tools = compile_ir_to_tools(ir, external_tools)
+
+    evidence: list[EvidenceItem] = list(tool_evidence)
     total_in, total_out = 0, 0
 
     # Step 4: Agent 循环
@@ -449,6 +470,9 @@ def run_skill_agent(
             output_tokens=total_out,
             total_tokens=total_in + total_out,
         ),
+        tool_results=tool_results,
+        artifacts=artifacts,
+        policy_decisions=policy_decisions,
     )
 
 

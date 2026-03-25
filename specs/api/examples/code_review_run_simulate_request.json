@@ -1,0 +1,11 @@
+{
+  "skill_id": "replace-after-compile",
+  "user_input": "审查 PR #128，重点看数据库迁移风险、接口兼容性和测试缺口，先给我草稿。",
+  "execution_mode": "simulate",
+  "allow_side_effects": false,
+  "confirm": false,
+  "input_context": {
+    "repo_path": "/tmp/mindlakevm_demo_repo",
+    "pr_number": 128
+  }
+}

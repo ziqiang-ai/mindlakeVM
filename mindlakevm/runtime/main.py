@@ -11,6 +11,7 @@ from api.compile import router as compile_router
 from api.skills import router as skills_router
 from api.run import router as run_router
 from api.bench import router as bench_router
+from api.tools import router as tools_router
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ app.include_router(compile_router)
 app.include_router(skills_router)
 app.include_router(run_router)
 app.include_router(bench_router)
+app.include_router(tools_router)
 
 # ── 挂载 MCP Server 到 /mcp ─────────────────────────────────────────────────
 if _mcp_available and _mcp_server:

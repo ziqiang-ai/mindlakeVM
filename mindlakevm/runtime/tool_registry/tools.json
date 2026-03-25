@@ -1,0 +1,62 @@
+[
+  {
+    "args_schema": {
+      "properties": {},
+      "type": "object"
+    },
+    "capabilities": [
+      "ops.alert"
+    ],
+    "command": "echo",
+    "kind": "cli",
+    "name": "PagerDuty CLI",
+    "output_schema": {
+      "type": "object"
+    },
+    "provider": "cli-anything",
+    "registry_metadata": {},
+    "requires_confirmation": false,
+    "retry_policy": {
+      "max_retries": 0,
+      "retryable_errors": []
+    },
+    "side_effect_level": "read_only",
+    "skill_path": null,
+    "status": "active",
+    "supports_json": false,
+    "supports_repl": false,
+    "timeout_ms": 5000,
+    "tool_id": "cli_anything_pagerduty",
+    "version": "0.1.0"
+  },
+  {
+    "args_schema": {
+      "properties": {},
+      "type": "object"
+    },
+    "capabilities": [
+      "ops.ticket"
+    ],
+    "command": "echo",
+    "kind": "cli",
+    "name": "Ticketing CLI",
+    "output_schema": {
+      "type": "object"
+    },
+    "provider": "cli-anything",
+    "registry_metadata": {},
+    "requires_confirmation": true,
+    "retry_policy": {
+      "max_retries": 0,
+      "retryable_errors": []
+    },
+    "side_effect_level": "write_optional",
+    "skill_path": null,
+    "status": "active",
+    "supports_json": false,
+    "supports_repl": false,
+    "timeout_ms": 5000,
+    "tool_id": "cli_anything_ticketing",
+    "version": "0.1.0"
+  }
+]

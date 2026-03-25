@@ -1,0 +1,7 @@
+{
+  "task_description": "LLMOS Kernel 架构规范 Skill",
+  "document_id": "../../docs/llmos_kernel_architecture_case.md",
+  "strategy": "detailed",
+  "force_recompile": false,
+  "enable_probe": true
+}

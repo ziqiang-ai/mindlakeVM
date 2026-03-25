@@ -1,0 +1,16 @@
+{
+  "tool_id": "cli_anything_pr_review",
+  "name": "CLI-Anything PR Review",
+  "version": "0.1.0",
+  "provider": "cli-anything",
+  "command": "../../examples/fake_cli_anything/fake_cli_anything_pr_review.py",
+  "capabilities": [
+    "repo.review",
+    "pr.publish_review"
+  ],
+  "side_effect_level": "write_optional",
+  "requires_confirmation": true,
+  "supports_json": true,
+  "supports_repl": false,
+  "timeout_ms": 10000
+}

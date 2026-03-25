@@ -1,0 +1,14 @@
+{
+  "binding_id": "bind_code_review_first_step",
+  "skill_id": "replace-after-compile",
+  "step_id": "replace-after-inspecting-skill",
+  "tool_id": "cli_anything_pr_review",
+  "arg_mapping": {
+    "action": "review_pr",
+    "repo_path": "$input.repo_path",
+    "pr_number": "$input.pr_number",
+    "focus": "$user_input",
+    "output_path": "$runtime.temp_output_path"
+  },
+  "enabled": true
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "arg_mapping": {
+      "query": "$user_input"
+    },
+    "binding_id": "bind_e2e_readonly",
+    "confirmation_policy": "inherit_tool",
+    "enabled": false,
+    "result_mapping": {},
+    "skill_id": "ops-sev1-incident-response",
+    "step_id": "assess-impact",
+    "tool_id": "cli_anything_pagerduty"
+  },
+  {
+    "arg_mapping": {
+      "query": "$user_input"
+    },
+    "binding_id": "bind_e2e_write",
+    "confirmation_policy": "inherit_tool",
+    "enabled": true,
+    "result_mapping": {},
+    "skill_id": "ops-sev1-incident-response",
+    "step_id": "assess-impact",
+    "tool_id": "cli_anything_ticketing"
+  }
+]

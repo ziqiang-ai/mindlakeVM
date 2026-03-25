@@ -1,0 +1,89 @@
+id: llmos-kernel-architecture
+name: LLMOS Kernel 架构规范问答
+type: other
+description: |
+  验证系统能否基于 LLMOS Kernel 架构规范文档，稳定回答 Cognitive ABI、
+  Agent Process、Kernel Step Loop 与 Policy Hook 等核心问题。
+  该场景用于展示“项目设计对话 -> 案例文档 -> Skill -> 问答/评测”的完整链路。
+
+skill_id: llmos-kernel-architecture
+
+document:
+  source: "LLMOS Kernel 架构规范案例文档"
+  content_path: "../../../docs/llmos_kernel_architecture_case.md"
+
+baselines:
+  vanilla:
+    enabled: true
+    system_prompt: |
+      You are a helpful systems design assistant. Answer architecture questions clearly and accurately.
+  rag:
+    enabled: true
+    rag_top_k: 3
+  mindlakevm:
+    enabled: true
+
+test_cases:
+  - id: define-cognitive-abi
+    description: 解释 Cognitive ABI 与 Skill Spec 的关系
+    tags: [architecture, abi]
+    user_input: |
+      什么是 Cognitive ABI，它和 Skill Spec 的关系是什么？
+    expects:
+      blocked: false
+      output_contains:
+        - "Cognitive ABI"
+        - "Skill Spec"
+        - "装载"
+
+  - id: distinguish-process-frame-skill
+    description: 区分 Agent Process、Frame、Skill
+    tags: [architecture, process]
+    user_input: |
+      Agent Process、Frame、Skill 三者怎么区分？
+    expects:
+      blocked: false
+      output_contains:
+        - "Process"
+        - "Frame"
+        - "Skill"
+        - "活体"
+
+  - id: locate-policy-hook
+    description: 解释 Policy Hook 在 Step Loop 中的位置
+    tags: [kernel, policy]
+    user_input: |
+      Policy Hook 在 Kernel Step Loop 中处于什么位置，为什么要放在那里？
+    expects:
+      blocked: false
+      output_contains:
+        - "authorize"
+        - "Policy Hook"
+        - "Budget Hook"
+
+  - id: event-flow-vs-object-model
+    description: 解释时间骨架与空间骨架的关系
+    tags: [event, object-model]
+    user_input: |
+      为什么 Event Flow 是时间骨架，而 Object Model 是空间骨架？
+    expects:
+      blocked: false
+      output_contains:
+        - "时间骨架"
+        - "空间骨架"
+        - "状态转移"
+
+judges:
+  - id: no_false_positive
+    fatal: true
+    weight: 1.0
+  - id: output_contains_keywords
+    fatal: false
+    weight: 1.0
+
+metadata:
+  rnet_core: "R+T"
+  demo_priority: medium
+  expected_vanilla_success_rate: 0.35
+  expected_mindlakevm_success_rate: 0.85
+  highlight: "将项目设计对话沉淀为案例文档后，MindLakeVM 可稳定回答内核架构问题"

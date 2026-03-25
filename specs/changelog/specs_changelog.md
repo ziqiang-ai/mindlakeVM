@@ -20,6 +20,7 @@
 | `rnet/rnet_core_v{N}.md` | `v0.x` | `v0.3` |
 | `rnet/mapping_ui_v{N}.md` | `v0.x` | `v0.1` |
 | `rnet/mapping_metrics_v{N}.md` | `v0.x` | `v0.1` |
+| `registration/registration_model_v{N}.md` | `v0.x` | `v0.1` |
 | `product/demo_repo_structure_v{N}.md` | `v0.x` | `v0.1` |
 | `product/wireframe_text_v{N}.md` | `v0.x` | `v0.1` |
 | `product/prd_v{N}.md` | `v0.x` | `v0.1` |
@@ -39,6 +40,64 @@
 ---
 
 ## 变更历史
+
+### 2026-03-25 — 新增 PR 代码审查案例（v0.1）
+
+**作者**：mindlakeVM 项目组  
+**类型**：新增示例（无破坏性变更）
+
+#### 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| `api/examples/code_review_compile_request.json` | PR 代码审查案例编译请求 |
+| `api/examples/code_review_tool_handle.json` | PR review 工具注册请求 |
+| `api/examples/code_review_tool_binding.json` | PR review 工具绑定请求 |
+| `api/examples/code_review_run_simulate_request.json` | simulate 模式审查草稿请求 |
+| `api/examples/code_review_run_live_request.json` | live 模式发布审查结果请求 |
+
+#### 说明
+
+- 提供一个更贴近真实工程协作的外部工具接入案例：PR 代码审查
+- 覆盖 compile、tool register、binding、simulate 审查草稿、live 发布结果的完整链路
+
+### 2026-03-25 — 新增 Fake CLI-Anything 接入示例（v0.1）
+
+**作者**：mindlakeVM 项目组  
+**类型**：新增示例（无破坏性变更）
+
+#### 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| `api/examples/fake_cli_anything_compile_request.json` | fake CLI-Anything 案例编译请求 |
+| `api/examples/fake_cli_anything_tool_handle.json` | fake 工具注册请求 |
+| `api/examples/fake_cli_anything_tool_binding.json` | fake 工具绑定请求 |
+| `api/examples/fake_cli_anything_run_simulate_request.json` | simulate 模式执行请求 |
+| `api/examples/fake_cli_anything_run_live_request.json` | live 模式执行请求 |
+
+#### 说明
+
+- 提供一条从 compile 到 tool register/bind，再到 simulate/live 的最小外部工具接入演示链路
+- 配套仓库内 fake CLI 工具与 e2e 脚本，便于本地演示和回归验证
+
+### 2026-03-25 — 新增 Registration 规范（v0.1）
+
+**作者**：mindlakeVM 项目组  
+**类型**：新增规范（无破坏性变更）
+
+#### 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| `registration/registration_model_v0.1.md` | Skill / Tool / Process / Event / Budget 的统一注册模型 |
+| `registration/registration_object_model_diagram_v0.1.md` | `models.py + registry.py` 对应的统一注册对象模型设计图 |
+
+#### 说明
+
+- 将“注册”从 Skill 存储扩展为统一对象进入系统秩序的规则
+- 明确注册对象分层：定义对象 / 关系对象 / 运行对象 / 治理对象
+- 为后续 `Process Registry / Event Registry / Budget Registry / Checkpoint Registry` 留出规范入口
 
 ### 2025-02-27 — 初始版本（v0.1 全套）
 

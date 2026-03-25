@@ -2,19 +2,24 @@
 Skill 执行器：挂载 Skill → 检查 guardrail → 执行 → 收集 evidence → 验证
 """
 from __future__ import annotations
+import json
 import os
 import re
-from datetime import datetime, timezone
+import tempfile
+import uuid
 
 from models import (
     SemanticKernelIR, RunRequest, RunResponse,
-    EvidenceItem, TokenUsage,
+    EvidenceItem, TokenUsage, ToolExecutionResult,
+    ToolInvocation, ToolPolicyDecision, ToolArtifact,
 )
 from executor.guardrail import check_guardrails
+from executor.tool_adapter import invoke_cli_tool
 from executor.tracer import make_trace, update_trace_decision
 from executor.verifier import verify
 from compiler.llm import llm_text
 import store
+import tool_registry
 
 
 def run_skill(ir: SemanticKernelIR, req: RunRequest) -> RunResponse:
@@ -39,16 +44,35 @@ def run_skill(ir: SemanticKernelIR, req: RunRequest) -> RunResponse:
             usage=TokenUsage(),
         )
 
+    trace = make_trace(ir.t.path)
+    tool_results, artifacts, policy_decisions, tool_evidence = _execute_bound_tools(ir, req, trace)
+    denied = next((decision for decision in policy_decisions if not decision.allowed), None)
+    if denied:
+        block_msg = _build_policy_block_message(denied)
+        validation = verify(ir, block_msg, tool_evidence, len(trace))
+        return RunResponse(
+            output_text=block_msg,
+            blocked=True,
+            violations=[],
+            trace=trace,
+            evidence=tool_evidence,
+            validation=validation,
+            usage=TokenUsage(),
+            tool_results=tool_results,
+            artifacts=artifacts,
+            policy_decisions=policy_decisions,
+        )
+
     # Step 2: 正常执行 — 构建 Skill prompt 并调用 LLM
     reference_contexts = _select_reference_context(ir, req.skill_id, req.user_input)
-    skill_prompt = _build_skill_prompt(ir, reference_contexts)
+    skill_prompt = _build_skill_prompt(ir, reference_contexts, tool_results)
     output_text, in_tok, out_tok = llm_text(skill_prompt, req.user_input)
 
     # Step 3: 收集 evidence（从 references 中匹配相关片段）
     evidence = _collect_evidence(ir, req.skill_id, req.user_input, output_text, reference_contexts)
+    evidence.extend(tool_evidence)
 
     # Step 4: 生成 trace
-    trace = make_trace(ir.t.path)
     if trace:
         update_trace_decision(trace, trace[0].step_id, "正常执行完成")
 
@@ -67,10 +91,17 @@ def run_skill(ir: SemanticKernelIR, req: RunRequest) -> RunResponse:
             output_tokens=out_tok,
             total_tokens=in_tok + out_tok,
         ),
+        tool_results=tool_results,
+        artifacts=artifacts,
+        policy_decisions=policy_decisions,
     )
 
 
-def _build_skill_prompt(ir: SemanticKernelIR, reference_contexts: list[dict] | None = None) -> str:
+def _build_skill_prompt(
+    ir: SemanticKernelIR,
+    reference_contexts: list[dict] | None = None,
+    tool_results: list[ToolExecutionResult] | None = None,
+) -> str:
     """将 SemanticKernelIR 渲染为 Skill 系统提示词（Meta-Prompt → Prompt Instance）"""
     cot = "\n".join(f"- {s}" for s in ir.t.cot_steps) if ir.t.cot_steps else ""
     steps = "\n".join(
@@ -86,6 +117,10 @@ def _build_skill_prompt(ir: SemanticKernelIR, reference_contexts: list[dict] | N
     ref_context = "\n\n".join(
         f"### {ctx['path']}\n{ctx['snippet']}"
         for ctx in (reference_contexts or [])
+    )
+    tool_context = "\n\n".join(
+        f"### {result.tool_id}\n状态: {result.status}\n结果: {result.stdout_json if result.stdout_json else {'exit_code': result.exit_code}}\nArtifacts: {[a.path for a in result.artifacts]}"
+        for result in (tool_results or [])
     )
 
     return f"""你是一个专业的 AI 助手，挂载了以下 Skill：
@@ -112,6 +147,9 @@ def _build_skill_prompt(ir: SemanticKernelIR, reference_contexts: list[dict] | N
 ## 参考片段
 {ref_context if ref_context else "（无可用片段）"}
 
+## 工具执行结果
+{tool_context if tool_context else "（本次未执行外部工具）"}
+
 ## 输出要求
 - 格式：{ir.e.format}
 - 目标：{ir.e.target_entropy}
@@ -127,6 +165,15 @@ def _build_block_message(violations) -> str:
         lines.append(f"**原因**：{v.reason}\n")
     lines.append("请满足上述约束条件后重试，或联系相关负责人获取授权。")
     return "\n".join(lines)
+
+
+def _build_policy_block_message(decision: ToolPolicyDecision) -> str:
+    return "\n".join([
+        "⛔ 工具执行被策略阻止",
+        f"**工具**：{decision.tool_id}",
+        f"**原因**：{decision.reason or '策略未放行'}",
+        "请确认风险、开放副作用权限，或调整执行模式后重试。",
+    ])
 
 
 def _collect_evidence(
@@ -236,3 +283,145 @@ def _tokenize(text: str) -> list[str]:
 def _reference_terms(path: str, scope: str) -> list[str]:
     base = path.split("/")[-1].replace(".md", "").replace("_", " ").replace("-", " ")
     return _tokenize(f"{base} {scope}")
+
+
+def _execute_bound_tools(
+    ir: SemanticKernelIR,
+    req: RunRequest,
+    trace,
+) -> tuple[list[ToolExecutionResult], list[ToolArtifact], list[ToolPolicyDecision], list[EvidenceItem]]:
+    tool_results: list[ToolExecutionResult] = []
+    artifacts: list[ToolArtifact] = []
+    policy_decisions: list[ToolPolicyDecision] = []
+    evidence: list[EvidenceItem] = []
+    all_resolved_args: list[dict] = []
+
+    if req.execution_mode == "answer_only":
+        return tool_results, artifacts, policy_decisions, evidence
+
+    # batch load to avoid repeated disk IO per step
+    all_bindings = {(b.skill_id, b.step_id): b for b in tool_registry.list_bindings() if b.enabled}
+    all_tools = {t.tool_id: t for t in tool_registry.list_tools()}
+
+    for step in ir.t.path:
+        binding = all_bindings.get((req.skill_id, step.id))
+        if not binding:
+            continue
+        handle = all_tools.get(binding.tool_id)
+        if not handle or handle.status != "active":
+            continue
+
+        decision = _evaluate_tool_policy(step, handle, req)
+        policy_decisions.append(decision)
+        _annotate_trace_with_policy(trace, step.id, handle.tool_id, decision)
+        if not decision.allowed:
+            break
+
+        resolved_args = _resolve_binding_args(binding.arg_mapping, req)
+        all_resolved_args.append(resolved_args)
+        invocation = ToolInvocation(
+            invocation_id=f"invoke_{uuid.uuid4().hex[:8]}",
+            tool_id=handle.tool_id,
+            process_id=req.skill_id,
+            step_id=step.id,
+            args=resolved_args,
+            dry_run=req.execution_mode == "simulate",
+            timeout_ms=handle.timeout_ms,
+        )
+        result = invoke_cli_tool(handle, invocation)
+        tool_results.append(result)
+        artifacts.extend(result.artifacts)
+        _annotate_trace_with_tool_result(trace, step.id, handle.tool_id, result)
+        if result.stdout_json:
+            evidence.append(EvidenceItem(
+                source_path=f"tool:{handle.tool_id}",
+                source_type="tool_result",
+                excerpt=json.dumps(result.stdout_json, ensure_ascii=False)[:500],
+                relevance=f"工具 {handle.tool_id} 的结构化输出",
+            ))
+
+    _cleanup_temp_files(all_resolved_args)
+    return tool_results, artifacts, policy_decisions, evidence
+
+
+def _evaluate_tool_policy(step, handle, req: RunRequest) -> ToolPolicyDecision:
+    requires_confirmation = step.requires_confirmation or handle.requires_confirmation
+    side_effect = step.side_effect_level or handle.side_effect_level
+    if side_effect != "read_only" and not req.allow_side_effects:
+        return ToolPolicyDecision(
+            tool_id=handle.tool_id,
+            allowed=False,
+            reason="当前请求未开放副作用执行权限（allow_side_effects=false）",
+            requires_confirmation=requires_confirmation,
+            risk_level="high",
+        )
+    if requires_confirmation and not req.confirm and req.execution_mode == "live":
+        return ToolPolicyDecision(
+            tool_id=handle.tool_id,
+            allowed=False,
+            reason="该工具步骤需要确认后才能在 live 模式执行",
+            requires_confirmation=True,
+            risk_level="medium" if side_effect == "write_optional" else "high",
+        )
+    return ToolPolicyDecision(
+        tool_id=handle.tool_id,
+        allowed=True,
+        requires_confirmation=requires_confirmation,
+        risk_level="low" if side_effect == "read_only" else "medium",
+    )
+
+
+def _resolve_binding_args(arg_mapping: dict[str, str], req: RunRequest) -> dict:
+    runtime_output_path = _make_temp_output_path()
+    resolved = {}
+    for key, value in arg_mapping.items():
+        resolved[key] = _resolve_binding_value(value, req, runtime_output_path)
+    return resolved
+
+
+def _resolve_binding_value(value, req: RunRequest, runtime_output_path: str):
+    if not isinstance(value, str):
+        return value
+    if value == "$user_input":
+        return req.user_input
+    if value.startswith("$input."):
+        return req.input_context.get(value.split(".", 1)[1])
+    if value == "$runtime.temp_output_path":
+        return runtime_output_path
+    return value
+
+
+def _annotate_trace_with_policy(trace, step_id: str, tool_id: str, decision: ToolPolicyDecision) -> None:
+    for item in trace:
+        if item.step_id == step_id:
+            item.tool_id = tool_id
+            if not decision.allowed:
+                item.status = "blocked"
+                item.notes = decision.reason
+            return
+
+
+def _annotate_trace_with_tool_result(trace, step_id: str, tool_id: str, result: ToolExecutionResult) -> None:
+    for item in trace:
+        if item.step_id == step_id:
+            item.tool_id = tool_id
+            item.tool_invocation_id = result.invocation_id
+            item.artifacts = [artifact.path for artifact in result.artifacts]
+            item.notes = result.stdout_json.get("summary") or item.notes
+            break
+
+
+def _make_temp_output_path() -> str:
+    fd, path = tempfile.mkstemp(prefix="mindlakevm_tool_", suffix=".tmp")
+    os.close(fd)
+    return path
+
+
+def _cleanup_temp_files(args_list: list[dict]) -> None:
+    for args in args_list:
+        for value in args.values():
+            if isinstance(value, str) and value.startswith(tempfile.gettempdir()) and "mindlakevm_tool_" in value:
+                try:
+                    os.unlink(value)
+                except OSError:
+                    pass

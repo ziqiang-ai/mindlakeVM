@@ -1,0 +1,25 @@
+{
+  "skill_id": "llmos-kernel-architecture",
+  "questions": [
+    {
+      "id": "cognitive-abi-vs-skill-spec",
+      "user_input": "什么是 Cognitive ABI，它和 Skill Spec 的关系是什么？",
+      "focus": "解释 API 与执行接缝的区别"
+    },
+    {
+      "id": "process-frame-skill-diff",
+      "user_input": "Agent Process、Frame、Skill 三者怎么区分？",
+      "focus": "解释定义对象、局部执行位面和最小活体执行单元"
+    },
+    {
+      "id": "step-loop-policy-hook",
+      "user_input": "Policy Hook 在 Kernel Step Loop 中处于什么位置，为什么要放在那里？",
+      "focus": "解释 authorize 阶段以及与 budget hook 的区别"
+    },
+    {
+      "id": "event-vs-object-model",
+      "user_input": "为什么 Event Flow 是时间骨架，而 Object Model 是空间骨架？",
+      "focus": "解释动态过程与静态对象系统的关系"
+    }
+  ]
+}
