@@ -10,6 +10,7 @@ from models import (
 from bench.scenario_loader import load_scenario
 from bench.judges import evaluate_case, JUDGE_REGISTRY, DEFAULT_JUDGES
 from bench.baselines import run_vanilla, run_rag, run_mindlakevm
+from executor.verifier import match_reference_path
 import store
 
 
@@ -67,7 +68,7 @@ def _ensure_skill_compiled(scenario: dict, skill_id: str) -> None:
         document_id=document_id,
         strategy="default",
     )
-    ir, package = compile_document(req)
+    ir, package, _ = compile_document(req)
     # 强制使用场景中声明的 skill_id
     package.skill_id = skill_id
     store.save(skill_id, ir, package)
@@ -101,19 +102,19 @@ def _run_baseline(
         else:
             result = run_mindlakevm(skill_id, user_input)
 
-        case_pass = evaluate_case(tc, result, judge_ids, judge_overrides)
-        if case_pass:
+        case_result = evaluate_case(tc, result, judge_ids, judge_overrides)
+        if case_result.passed:
             passes += 1
 
         usage = result.usage or TokenUsage()
         total_in += usage.input_tokens
         total_out += usage.output_tokens
 
-        # citation rate
+        # citation rate（使用统一 match_reference_path，与 judge_evidence_cited 行为一致）
         if expects.get("evidence_paths"):
             cited = {e.source_path for e in result.evidence}
             expected = expects["evidence_paths"]
-            if all(p in cited for p in expected):
+            if all(match_reference_path(p, cited) for p in expected):
                 citation_hits += 1
 
         # guardrail_block_rate (应拦截 case)

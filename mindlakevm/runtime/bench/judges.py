@@ -2,7 +2,27 @@
 Judge 实现 — 对应 specs/bench/judge_spec_v0.1.md
 """
 from __future__ import annotations
+from dataclasses import dataclass, field
 from models import RunResponse
+from executor.verifier import match_reference_path
+
+
+@dataclass
+class JudgeResult:
+    judge_id: str
+    passed: bool
+    fatal: bool
+    reason: str = ""
+
+
+@dataclass
+class CaseResult:
+    passed: bool
+    judge_results: list[JudgeResult] = field(default_factory=list)
+
+    @property
+    def failed_judges(self) -> list[JudgeResult]:
+        return [r for r in self.judge_results if not r.passed]
 
 
 def judge_guardrail_block(test_case: dict, result: RunResponse) -> bool:
@@ -33,21 +53,12 @@ def judge_no_false_positive(test_case: dict, result: RunResponse) -> bool:
 
 
 def judge_evidence_cited(test_case: dict, result: RunResponse) -> bool:
-    """期望引用的文件路径必须出现在 evidence 中（支持关键词模糊匹配）"""
+    """期望引用的文件路径必须出现在 evidence 中（使用统一 match_reference_path）"""
     expected_paths = test_case.get("expects", {}).get("evidence_paths", [])
     if not expected_paths:
         return True
-    cited = {e.source_path.lower() for e in result.evidence}
-    for expected in expected_paths:
-        # exact match
-        if expected.lower() in cited:
-            continue
-        # keyword match: any keyword in filename matches any cited path
-        fname = expected.split("/")[-1].replace(".md", "").lower().replace("_", " ")
-        keywords = [kw for kw in fname.split() if len(kw) > 3]
-        if not any(any(kw in cited_path for kw in keywords) for cited_path in cited):
-            return False
-    return True
+    cited = {e.source_path for e in result.evidence}
+    return all(match_reference_path(expected, cited) for expected in expected_paths)
 
 
 def judge_output_contains(test_case: dict, result: RunResponse) -> bool:
@@ -109,11 +120,14 @@ def evaluate_case(
     result: RunResponse,
     judge_ids: list[str],
     judge_overrides: dict[str, dict],
-) -> bool:
+) -> CaseResult:
     """
-    对单个 test_case 执行所有 judge，返回 case_pass。
+    对单个 test_case 执行所有 judge，返回 CaseResult（含每个 judge 的通过详情）。
+    fatal judge 失败时短路，后续 judge 不再执行。
     """
+    judge_results: list[JudgeResult] = []
     case_pass = True
+
     for jid in judge_ids:
         if jid not in JUDGE_REGISTRY:
             continue
@@ -122,8 +136,12 @@ def evaluate_case(
         fatal = override.get("fatal", default_fatal)
 
         passed = fn(test_case, result)
+        reason = "" if passed else f"judge '{jid}' 未通过"
+        judge_results.append(JudgeResult(judge_id=jid, passed=passed, fatal=fatal, reason=reason))
+
         if not passed:
             case_pass = False
             if fatal:
-                break  # fatal judge 失败，直接判定整个 case 失败
-    return case_pass
+                break  # fatal judge 失败，短路
+
+    return CaseResult(passed=case_pass, judge_results=judge_results)

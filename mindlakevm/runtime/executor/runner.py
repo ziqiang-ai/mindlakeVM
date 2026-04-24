@@ -44,7 +44,9 @@ def run_skill(ir: SemanticKernelIR, req: RunRequest) -> RunResponse:
             usage=TokenUsage(),
         )
 
-    trace = make_trace(ir.t.path)
+    # 单次执行模式：trace 在 LLM 运行前预生成，步骤状态为 synthetic（非真实执行顺序）
+    # 如需真实步骤追踪，请使用 agent_runner.run_skill_agent
+    trace = make_trace(ir.t.path, synthetic=True)
     tool_results, artifacts, policy_decisions, tool_evidence = _execute_bound_tools(ir, req, trace)
     denied = next((decision for decision in policy_decisions if not decision.allowed), None)
     if denied:

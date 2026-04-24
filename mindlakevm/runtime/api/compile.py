@@ -36,7 +36,7 @@ def compile_doc(req: CompileRequest):
                 )
 
     try:
-        ir, package = compile_document(resolved_req)
+        ir, package, ir_validation = compile_document(resolved_req)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"编译失败: {e}")
 
@@ -50,4 +50,5 @@ def compile_doc(req: CompileRequest):
         similarity=0.0,
         ir=ir,
         artifacts=package,
+        ir_validation=ir_validation,
     )

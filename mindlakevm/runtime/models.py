@@ -187,6 +187,15 @@ class ToolInvocation(BaseModel):
 
 # ── API 请求/响应 ─────────────────────────────────────────────────────────────
 
+class IRValidationResult(BaseModel):
+    passed: bool
+    coverage_score: float = 1.0
+    missing_steps: list[str] = Field(default_factory=list)
+    constraint_issues: list[str] = Field(default_factory=list)
+    reviewer_notes: str = ""
+    skipped: bool = False
+
+
 class CompileRequest(BaseModel):
     task_description: str
     document_content: Optional[str] = None
@@ -194,6 +203,7 @@ class CompileRequest(BaseModel):
     strategy: Literal["minimal", "default", "detailed"] = "default"
     force_recompile: bool = False
     enable_probe: bool = False
+    validate_ir: bool = False    # True 强制触发 L1 IR 验证（覆盖环境变量）
 
 
 class CompileResponse(BaseModel):
@@ -202,6 +212,7 @@ class CompileResponse(BaseModel):
     similarity: float = 0.0
     ir: SemanticKernelIR
     artifacts: SkillPackage
+    ir_validation: Optional[IRValidationResult] = None
 
 
 class SkillSummary(BaseModel):

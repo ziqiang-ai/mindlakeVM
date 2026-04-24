@@ -15,9 +15,10 @@ from models import (
     SemanticKernelIR, SkillPackage, SkillFile,
     RCore, NCore, ECore, TCore,
     PathStep, DecisionPoint, ReferenceEntry,
-    CompileRequest,
+    CompileRequest, IRValidationResult,
 )
 from compiler.llm import llm_json
+from compiler.ir_validator import validate_ir
 
 # ── tool_use 定义：generate_semantic_kernel_ir ────────────────────────────────
 
@@ -142,7 +143,9 @@ def _use_tool_mode() -> bool:
     return "openrouter" in base_url or os.environ.get("ENABLE_TOOL_USE", "") == "1"
 
 
-def compile_document(req: CompileRequest) -> tuple[SemanticKernelIR, SkillPackage]:
+def compile_document(
+    req: CompileRequest,
+) -> tuple[SemanticKernelIR, SkillPackage, IRValidationResult | None]:
     content = resolve_document_content(req)
 
     # Phase 0: Ingest — normalise input
@@ -157,7 +160,23 @@ def compile_document(req: CompileRequest) -> tuple[SemanticKernelIR, SkillPackag
     # Phase 4: Package — build SkillPackage manifest
     package = _build_package(ir, doc_text)
 
-    return ir, package
+    # Phase 5: L1 IR Validation — 对照原文审查 IR 质量（可选）
+    ir_validation: IRValidationResult | None = None
+    if req.validate_ir:
+        import os as _os
+        _os.environ["ENABLE_IR_VALIDATION"] = "1"
+    result = validate_ir(ir, doc_text)
+    if not result.skipped:
+        ir_validation = IRValidationResult(
+            passed=result.passed,
+            coverage_score=result.coverage_score,
+            missing_steps=result.missing_steps,
+            constraint_issues=result.constraint_issues,
+            reviewer_notes=result.reviewer_notes,
+            skipped=False,
+        )
+
+    return ir, package, ir_validation
 
 
 def resolve_document_content(req: CompileRequest) -> str:
